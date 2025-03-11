@@ -1,13 +1,12 @@
 import os
 import json
 
-from langchain_core.language_models import BaseLanguageModel
-
+from llms import LlmBase
 from utils.logger import Logger
 from scrapping_agent.scrapper import Scrapper
 
 class ScrappingAgent:
-  def __init__(self, llm: BaseLanguageModel):
+  def __init__(self, llm: LlmBase):
     self.scrapper = Scrapper()
     self.llm = llm
     self.logger = None
@@ -20,30 +19,23 @@ class ScrappingAgent:
       init_msg = self.get_initial_message(url, site_info, query)
       self.logger.debug(f"[👤] {init_msg}")
 
-      chat = [
-        { "role": "developer", "content": self.get_prompt("agent.md") },
-        *self.get_conversation_sample(),
-        { "role": "user", "content": init_msg },
-      ]
+      self.llm.set_system_prompt(self.get_prompt("agent.md"))
+      self.llm.add_conversation_sample(*self.get_conversation_sample())
 
-      result = ""
-      end = False
-      while not end:
-        raw_response = self.get_llm_raw_response(chat)
-        chat.append({ "role": "assistant", "content": raw_response })
-        self.logger.debug(f"[🤖] {raw_response}")
+      raw_response = self.llm.get_response(init_msg)
+      self.logger.debug(f"[🤖] {raw_response}")
 
+      while True:
         action = raw_response.split("-####-")[1]
 
         action_result = await self.scrapper._async_run(action)
-        chat.append({ "role": "user", "content": action_result })
         self.logger.debug(f"[🔍] {action_result}")
 
         if action_result == "END":
-          result = action.replace("end()\n", "")
-          break
+          return action.replace("end()\n", "")
 
-      return result
+        raw_response = self.llm.get_response(action_result)
+        self.logger.debug(f"[🤖] {raw_response}")
     finally:
       await self.scrapper.close()
 

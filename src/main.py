@@ -1,13 +1,9 @@
 import asyncio
-from langchain_openai import ChatOpenAI
 
 from scrapping_agent.agent import ScrappingAgent
+from llms import LlmOpenAi
 
-llm = ChatOpenAI(
-  model="gpt-4o-mini",
-  temperature=0.5,
-  max_tokens=2000
-)
+llm = LlmOpenAi("gpt-4o-mini")
 
 agent = ScrappingAgent(llm)
 
