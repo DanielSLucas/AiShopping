@@ -1,5 +1,6 @@
 import os
 import json
+from urllib.parse import urlparse
 
 from llms import LlmBase
 from utils.logger import Logger
@@ -12,7 +13,8 @@ class ScrappingAgent:
     self.logger = None
 
   async def run(self, url: str, site_info: str, query: str, debug: bool = False):
-    self.logger = Logger(show_debug_logs=debug)
+    host = urlparse(url).netloc
+    self.logger = Logger(file_name=f"{host}_scrap",show_debug_logs=debug)
     try:
       await self.scrapper.initialize(url, headless=not debug)
 

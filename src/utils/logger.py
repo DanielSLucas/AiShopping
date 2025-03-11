@@ -5,10 +5,8 @@ LOGS_DIR = "./logs"
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 class Logger:
-  def __init__(self, file_name: str = None, show_debug_logs: bool = False):
-    if file_name is None:
-      file_name = datetime.now().strftime("%Y%m%d_%H%M%S_log.txt")
-    self.file_name = file_name
+  def __init__(self, file_name: str = "", show_debug_logs: bool = False):
+    self.file_name = file_name + f"_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
     self.show_debug_logs = show_debug_logs
   
   def log(self, *msgs: str):
