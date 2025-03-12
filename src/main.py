@@ -15,12 +15,15 @@ google_cse_id = getenv("GOOGLE_CSE_ID")
 def google_search(query: str, num_results: int):
   service = build("customsearch", "v1", developerKey=google_api_key)
 
+  current_year = datetime.now().year
   search_results = (
     service.cse()
     .list(
       q=query, 
       cx=google_cse_id,
       num=num_results,
+      lr="lang_pt",
+      dateRestrict=f"y[{current_year}]"
     )
     .execute()
   ).get('items', [])
@@ -35,28 +38,41 @@ def google_search(query: str, num_results: int):
   ]
 
 async def extract_data(logger, google_result, query):
-  llm = LlmOpenAi("gpt-4o-mini")
+  try:
+    llm = LlmOpenAi("gpt-4o-mini")
 
-  agent = ScrappingAgent(llm)
+    agent = ScrappingAgent(llm)
 
-  return await agent.run(
-    google_result['link'],
-    google_result['title'] + "\n" + google_result['snippet'],
-    query    
-  )
+    return await agent.run(
+      google_result['link'],
+      google_result['title'] + "\n" + google_result['snippet'],
+      query    
+    )
+  except:
+    return f"Falha ao extrair dados do link {google_result['link']}"
+
 
 entry_prompt = f"""
-Você é um assitente de compras online.
-     
-O usuário vai lhe enviar uma mensagem dizendo o que deseja comprar.
-  Quero comprar: {{o quê o usuário quer comprar}}
+Você é um assistente de compras online especializado em encontrar os melhores produtos.
 
-- Se o quê o usuário deseja comprar for muito amplo responda:
-  ## SPECIFY ##
-  {{Texto claro, conciso e amigável pedindo por informações mais específicas}}
-- Se o quê o usuário deseja comprar já estiver específico, ou ele já tenho dado informações adicionais responda:
-  ## SEARCH ##
-  Melhores {{produto}} para {{propósito}} em {datetime.now().year}
+O usuário vai lhe enviar uma mensagem dizendo o que deseja comprar.  
+Quero comprar: {{o quê o usuário quer comprar}}
+
+Se a solicitação for muito ampla ou vaga, responda:  
+## SPECIFY ##
+{{Peça mais detalhes de forma clara, concisa e amigável. Pergunte sobre modelo, marca, faixa de preço ou características desejadas.}}
+
+Se a solicitação já for específica, responda:  
+## SEARCH ##
+{{Gere uma query de busca no Google otimizada para encontrar os melhores resultados. A query deve:  
+1. Incluir o nome do produto e características relevantes.  
+2. Se houver uma faixa de preço, incluí-la de forma natural.  
+3. Adicionar termos como "comprar", "preço", "promoção", "novo" para priorizar páginas de venda.  
+4. Ser simples e direta, sem informações desnecessárias.  
+
+**Exemplo:**  
+Entrada do usuário: "Quero um teclado gamer mecânico com RGB de até 500 reais"  
+Saída da query: `"teclado gamer mecânico RGB comprar preço promoção novo até R$500"`}}
 """
 
 reviwer_prompt = f"""
@@ -96,7 +112,7 @@ async def main():
 
   # 3 - Buscar tier lists relacionado ao produto
   logger.debug("#3 - Busca google")
-  google_query = gpt_response.removeprefix("## SEARCH ##").strip()
+  google_query = gpt_response.removeprefix("## SEARCH ##").strip().replace('"', "")
   logger.debug(f"Google_query: {google_query}")
   google_results = google_search(google_query, 3)
   logger.debug(str(google_results))

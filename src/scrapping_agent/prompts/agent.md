@@ -78,7 +78,12 @@ A página contém as seguintes informações sobre o tópico solicitado:
 ✅ Para **seletores de atributos**, use **aspas duplas** e escape-as com `\\`:  
 ```python
 extract_elements('button[type=\"submit\"]', 'True', '2')
-```  
+```
+✅ Para **seletores de atributos**, use apenas um selector por vez:
+Exemplo: Não busque por mais de um elemento
+```python
+extract_elements('h1, h2, h3', 'True', '2')
+```
 ✅ **Pense passo a passo**, mas use **rascunhos curtos** (máximo **5 palavras por passo**).  
 ✅ Sempre retorne a resposta **após o separador** abaixo:  
 
