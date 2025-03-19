@@ -26,6 +26,9 @@ class LlmBase:
   def get_response(self, message: str):
     raise NotImplementedError("get_response not implemented")
   
+  def get_image_response(self, message: str, image_path: str) -> str:
+    raise NotImplementedError("get_image_response not implemented")
+
 class LlmOpenAi(LlmBase):
   def __init__(self, model: str, api_key:str =os.getenv("OPENAI_API_KEY")):
     super().__init__()
@@ -45,7 +48,7 @@ class LlmOpenAi(LlmBase):
     return response
   
   def get_image_response(self, message: str, image_path: str) -> str:
-    base64_image = self._encode_image(image_path)
+    base64_image = encode_image(image_path)
     content = [
       {"type": "text", "text": message},
       {

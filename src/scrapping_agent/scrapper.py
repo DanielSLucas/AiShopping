@@ -1,3 +1,4 @@
+from time import time
 import asyncio
 import re
 
@@ -11,11 +12,11 @@ class Scrapper:
     self.commands = {
       "extract_elements": self._handle_extract_elements,
       "interact_with_element": self._handle_interact_with_element,
+      "print": self._handle_print,
       "end": self._handle_end
     }
   
   async def initialize(self, url: str, headless: bool = True) -> None:
-    """Inicializa o navegador e a página."""
     self.playwright = await async_playwright().start()
     self.browser = await self.playwright.chromium.launch(headless=headless)
     self.page = await self.browser.new_page()
@@ -23,7 +24,6 @@ class Scrapper:
     await self.page.wait_for_load_state()
   
   async def close(self) -> None:
-    """Fecha o navegador e finaliza a sessão."""
     if self.browser:
       await self.browser.close()
     if self.playwright:
@@ -41,7 +41,7 @@ class Scrapper:
 
       return await command_handler(args)
     except Exception as e:
-      return f"Erro ao executar comando. Erro: {str(e)}"
+      return f"Error running command '{command}'. Erro: {str(e)}"
   
   def _extract_command_and_args(self, command: str):
     pattern = r"([a-z_]+)\(('.*',?)*\)"
@@ -56,7 +56,7 @@ class Scrapper:
     return name, args
   
   async def _handle_command_not_found(self, _: list[str]):
-    return "Comando não encontrado"
+    return "Command not found"
 
   async def _handle_extract_elements(self, args: list[str]):
     selector = args[0]
@@ -68,11 +68,11 @@ class Scrapper:
     elements = await self.page.query_selector_all(el_selector)
     formatted_elements = []
     
-    for i, el in enumerate(elements):
+    for el in elements:
       tag_name = (await el.evaluate('el => el.tagName')).lower()
       element = f"Element: {tag_name}"
       class_name = (await el.evaluate('el => el.className')).strip()
-      text = (await el.text_content()).strip()
+      text = re.sub(r'\s+', ' ', (await el.text_content()).strip())
 
       if class_name:
         element += f" Classes: {class_name}"
@@ -85,7 +85,7 @@ class Scrapper:
         element += f" Href: {await el.get_attribute('href')}"
 
       if tag_name == "input":
-        placeholder = await el.get_attribute("placeholder") or "sem placeholder"
+        placeholder = await el.get_attribute("placeholder") or "no placeholder"
         element += f" Name: {await el.get_attribute('name')} Placeholder: {placeholder}"
         
       formatted_elements.append(element)
@@ -93,6 +93,9 @@ class Scrapper:
       if len(formatted_elements) >= limit:
         break
     
+    if len(formatted_elements) == 0:
+      formatted_elements.append("No elements found")
+
     return "Extracted elements:\n" + "\n- ".join(formatted_elements)
 
   async def _handle_interact_with_element(self, args: list[str]):
@@ -105,17 +108,26 @@ class Scrapper:
     element = await self.page.query_selector(el_selector)
     
     if element is None:
-      return f"Elemento com selector '{el_selector}' não encontrado"
+      return f"Element with selector '{el_selector}' not found."
 
     if interaction == "click":
       await element.click()
-      return f"Clique realizado no elemento '{el_selector}'"
+      return f"Element '{el_selector}' clicked."
 
     if interaction == "fill":
       await element.type(text)
-      return f"Texto '{text}' inserido no elemento '{el_selector}'."
+      return f"Text '{text}' typed in element '{el_selector}'."
     
-    return "Interação não suportada."
+    return "Unsupported interaction."
 
   async def _handle_end(self, args: list[str]):
     return "END"
+  
+  async def _handle_print(self, args: list[str]):
+    return await self._print()
+  
+  async def _print(self):
+    timestamp = str(round(time()))
+    fileName= f"./temp/print_{timestamp}.png"
+    await self.page.screenshot(path=fileName, full_page=True)
+    return f"PRINT: {fileName}"
