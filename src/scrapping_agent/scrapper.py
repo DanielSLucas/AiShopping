@@ -13,7 +13,8 @@ class Scrapper:
       "extract_elements": self._handle_extract_elements,
       "interact_with_element": self._handle_interact_with_element,
       "print": self._handle_print,
-      "end": self._handle_end
+      "end": self._handle_end,
+      "page_summary": self._handle_page_summary
     }
   
   async def initialize(self, url: str, headless: bool = True) -> None:
@@ -51,7 +52,7 @@ class Scrapper:
       raise Exception("No function match")
 
     name = match.group(1).strip()
-    args = [arg.strip() for arg in match.group(2).strip().replace("'", "").split(",")] if match.group(2) else []
+    args = [arg.strip().strip("'") for arg in re.findall(r"'(.*?)'(?:,?\s*)", match.group(2))] if match.group(2) else []
 
     return name, args
   
@@ -96,7 +97,7 @@ class Scrapper:
     if len(formatted_elements) == 0:
       formatted_elements.append("No elements found")
 
-    return "Extracted elements:\n" + "\n- ".join(formatted_elements)
+    return "Extracted elements:\n-" + "\n- ".join(formatted_elements)
 
   async def _handle_interact_with_element(self, args: list[str]):
     selector = args[0] 
@@ -131,3 +132,23 @@ class Scrapper:
     fileName= f"./temp/print_{timestamp}.png"
     await self.page.screenshot(path=fileName, full_page=True)
     return f"PRINT: {fileName}"
+  
+  async def _handle_page_summary(self, args: list[str]): 
+    return await self._page_summary()
+
+  async def _page_summary(self):
+    url = self.page.url
+    title = await self.page.title()
+    description = await self.page.evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
+    
+    text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
+    interaction_elements_tags = "a, button, input"
+
+    text_elements = await self._extract_elements(text_elements_tags, True, 1000)
+    interaction_elements = await self._extract_elements(interaction_elements_tags, True, 1000)
+
+    return f"URL: {url}\n" \
+      + f"Title: {title}\n" \
+      + f"Description: {description}\n" \
+      + f"Text elements: \n{text_elements}\n" \
+      + f"Interaction elements: \n{interaction_elements}"

@@ -40,13 +40,15 @@ def google_search(query: str, num_results: int):
 async def extract_data(logger, google_result, query):
   try:
     llm = LlmOpenAi("gpt-4o-mini")
+    vision_llm = LlmOpenAi("gpt-4o")
 
-    agent = ScrappingAgent(llm)
+    agent = ScrappingAgent(llm, vision_llm)
 
     return await agent.run(
       google_result['link'],
       google_result['title'] + "\n" + google_result['snippet'],
-      query    
+      query,
+      all_results=True,
     )
   except:
     return f"Falha ao extrair dados do link {google_result['link']}"
@@ -83,7 +85,7 @@ Você é um assitente de compras online.
   - Sua resposta deve estar num formato apropriado para ser exibido no terminal
 """
 
-async def main2():
+async def main():
   start_time = time()
   logger = Logger(show_debug_logs=True)
   entry_llm = LlmOpenAi("gpt-4o-mini")
@@ -146,27 +148,27 @@ async def main2():
   elapsed_time = end_time - start_time
   logger.debug(f"Elapsed time: {elapsed_time:.4f} seconds")
 
-async def main():
-  llm = LlmOpenAi("gpt-4o-mini")
-  vision_llm = LlmOpenAi("gpt-4o")
+# async def main():
+#   llm = LlmOpenAi("gpt-4o-mini")
+#   vision_llm = LlmOpenAi("gpt-4o")
 
-  agent = ScrappingAgent(llm, vision_llm)
+#   agent = ScrappingAgent(llm, vision_llm)
 
-  # await agent.run(
-  #   "https://books.toscrape.com",
-  #   "All products | Books to Scrape - Sandbox\nBooks · Travel · Mystery · Historical Fiction · Sequential Art · Classics · Philosophy · Romance · Womens Fiction · Fiction · Childrens · Religion ...",
-  #   "Quero comprar: livros de qualquer gênero",
-  #   all_results=True,
-  #   debug=True
-  # )
+#   # await agent.run(
+#   #   "https://books.toscrape.com",
+#   #   "All products | Books to Scrape - Sandbox\nBooks · Travel · Mystery · Historical Fiction · Sequential Art · Classics · Philosophy · Romance · Womens Fiction · Fiction · Childrens · Religion ...",
+#   #   "Quero comprar: todos os livros de ficção científica",
+#   #   all_results=True,
+#   #   debug=True
+#   # )
 
-  await agent.run(
-    "https://www.mercadolivre.com.br",
-    "Headset Sem Fio No mercadolivre.com.br\nFone de Ouvido Headset Gamer Havit Fuxi-H3 Black, Quad-Mode Com Fio e Sem Fio, Wireless 2,4GHz, Bluetooth, Cabo USB-C, Cabo 3,5mm. Surround, Baixa Latência.",
-    "Quero comprar: Headset gamer, sem fio de até 500 reais",
-    all_results=True,
-    debug=True
-  )
+#   await agent.run(
+#     "https://www.mercadolivre.com.br",
+#     "Headset Sem Fio No mercadolivre.com.br\nFone de Ouvido Headset Gamer Havit Fuxi-H3 Black, Quad-Mode Com Fio e Sem Fio, Wireless 2,4GHz, Bluetooth, Cabo USB-C, Cabo 3,5mm. Surround, Baixa Latência.",
+#     "Quero comprar: Headset gamer, sem fio de até 500 reais",
+#     all_results=True,
+#     debug=True
+#   )
 
 if __name__ == "__main__":
   asyncio.run(main())
