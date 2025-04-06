@@ -4,6 +4,7 @@ from time import time
 import asyncio
 
 from googleapiclient.discovery import build
+from langchain_openai import ChatOpenAI
 
 from scrapping_agent.agent import ScrappingAgent
 from llms import LlmOpenAi
@@ -85,7 +86,7 @@ Você é um assitente de compras online.
   - Sua resposta deve estar num formato apropriado para ser exibido no terminal
 """
 
-async def main():
+async def main2():
   start_time = time()
   logger = Logger(show_debug_logs=True)
   entry_llm = LlmOpenAi("gpt-4o-mini")
@@ -148,27 +149,30 @@ async def main():
   elapsed_time = end_time - start_time
   logger.debug(f"Elapsed time: {elapsed_time:.4f} seconds")
 
-# async def main():
-#   llm = LlmOpenAi("gpt-4o-mini")
-#   vision_llm = LlmOpenAi("gpt-4o")
+async def main():
+  """Main function to execute the web navigation agent."""
+  llm = ChatOpenAI(model="gpt-4o-mini")
 
-#   agent = ScrappingAgent(llm, vision_llm)
+  agent = ScrappingAgent(
+    llm,
+    "https://books.toscrape.com",
+    "All products | Books to Scrape - Sandbox\nBooks · Travel · Mystery · Historical Fiction · Sequential Art · Classics · Philosophy · Romance · Womens Fiction · Fiction · Childrens · Religion ...",
+    "Quero comprar: todos os livros de ficção científica",
+    all_results=True,
+    debug=True
+  )
 
-#   # await agent.run(
-#   #   "https://books.toscrape.com",
-#   #   "All products | Books to Scrape - Sandbox\nBooks · Travel · Mystery · Historical Fiction · Sequential Art · Classics · Philosophy · Romance · Womens Fiction · Fiction · Childrens · Religion ...",
-#   #   "Quero comprar: todos os livros de ficção científica",
-#   #   all_results=True,
-#   #   debug=True
-#   # )
-
-#   await agent.run(
-#     "https://www.mercadolivre.com.br",
-#     "Headset Sem Fio No mercadolivre.com.br\nFone de Ouvido Headset Gamer Havit Fuxi-H3 Black, Quad-Mode Com Fio e Sem Fio, Wireless 2,4GHz, Bluetooth, Cabo USB-C, Cabo 3,5mm. Surround, Baixa Latência.",
-#     "Quero comprar: Headset gamer, sem fio de até 500 reais",
-#     all_results=True,
-#     debug=True
-#   )
+  # agent = ScrappingAgent(
+  #   llm,
+  #   "https://www.mercadolivre.com.br",
+  #   "Headset Sem Fio No mercadolivre.com.br\nFone de Ouvido Headset Gamer Havit Fuxi-H3 Black, Quad-Mode Com Fio e Sem Fio, Wireless 2,4GHz, Bluetooth, Cabo USB-C, Cabo 3,5mm. Surround, Baixa Latência.",
+  #   "Quero comprar: Headset gamer, sem fio de até 500 reais",
+  #   all_results=True,
+  #   debug=True
+  # )
+  await agent.initialize(headless=True)
+  await agent.run()
+  await agent.close()
 
 if __name__ == "__main__":
   asyncio.run(main())

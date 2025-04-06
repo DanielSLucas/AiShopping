@@ -1,115 +1,149 @@
 import os
-import json
 from urllib.parse import urlparse
+from typing import Annotated, Literal
 
-from llms import LlmBase
-from utils.logger import Logger
 from scrapping_agent.scrapper import Scrapper
+from scrapping_agent.scrapper_tools import make_scrapper_tools
+from utils.logger import Logger
+from utils.utils import get_prompt
+
+from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from typing_extensions import TypedDict
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langchain_core.messages import HumanMessage, ToolMessage
+
+class State(TypedDict):
+  messages: Annotated[list, add_messages]
 
 class ScrappingAgent:
-  def __init__(self, llm: LlmBase, vision_llm: LlmBase):
+  def __init__(
+    self,
+    llm: BaseChatModel,
+    url: str, 
+    site_info: str, 
+    query: str, 
+    all_results: bool = True, 
+    debug: bool = True,
+    vision_model = ChatOpenAI(model="gpt-4o")
+  ):
+    self.url = url
+    self.site_info = site_info
+    self.query = query
+    self.all_results = all_results
+    self.debug = debug
+    
+    self.logger = Logger(
+      file_name=f"{urlparse(url).netloc}_scrap", 
+      show_debug_logs=debug
+    )
+    
     self.scrapper = Scrapper()
     self.llm = llm
-    self.vision_llm = vision_llm
-    self.logger = None
+    self.vision_model = vision_model
+    
+    self.graph = None
+    self.scrapping_tools = None
+    self.tools_by_name = None
 
-  async def run(self, url: str, site_info: str, query: str, debug: bool = False, all_results: bool = False):
-    host = urlparse(url).netloc
-    self.logger = Logger(file_name=f"{host}_scrap",show_debug_logs=debug)
-    try:
-      self.logger.debug(f"[💻] Carregando página")
-      await self.scrapper.initialize(url, headless=not debug)
-
-      init_msgs = self._get_initial_messages(url, site_info, query, all_results)
-
-      self.logger.debug(f"[🤖] Analisando página")
-      page_summary = await self.scrapper._page_summary()
-      self.logger.debug(f"[🔍] Summary:\n {page_summary}")
-
-      self.llm.set_system_prompt(self.get_prompt("agent.md"))
-      self.llm.add_conversation_sample(*init_msgs)
-
-      raw_response = self.llm.get_response(page_summary)
-      self.logger.debug(f"[🤖] {raw_response}")
-
-      while True:
-        if "-####-" not in raw_response:
-          self.logger.debug("[⚠️] Missing delimiter '-####-' in response.")
-          raw_response = self.llm.get_response(f"⚠️ Your response is missing the delimiter '-####-'. Please correct it.\n{raw_response}")
-          self.logger.debug(f"[🤖] Corrected response: {raw_response}")
-
-        action = raw_response.split("-####-")[1].strip()
-        is_more_than_one_action = len(action.splitlines()) > 1
-
-        if "end()" not in action and is_more_than_one_action:
-          self.logger.debug("[⚠️] Trying to execute more than 1 action at once")
-          action = action.splitlines()[0]
-
-        action_result = await self.scrapper._async_run(action)
-
-        if action_result.startswith("PRINT:"):
-          action_result = self.add_print_description(action_result)
-        
-        self.logger.debug(f"[🔍] {action_result}")
-
-        if action_result == "END":
-          final_response = action.replace("end()\n", "").strip()
-          if not final_response:
-            self.logger.debug("[⚠️] Missing final response after 'end()' function.")
-            action_result = f"⚠️ Your response is missing final response after 'end()' function. Please correct it."
-          else:
-            return final_response
-
-        if is_more_than_one_action:
-          action_result = f"⚠️ You tried to execute more than 1 action at once. Only action {action} was executed. \nResult:\n{action_result}"
-
-        raw_response = self.llm.get_response(action_result)
-        self.logger.debug(f"[🤖] {raw_response}")
-    finally:
+  async def initialize(self, headless: bool = True):
+    """Initialize the scrapper and set up tools."""
+    await self.scrapper.initialize(self.url, headless=headless)
+    self.scrapping_tools = make_scrapper_tools(
+      self.scrapper,
+      vision_model=self.vision_model
+    )
+    self.tools_by_name = {tool.name: tool for tool in self.scrapping_tools}
+  
+  async def close(self):
+    """Close the scrapper."""
+    if self.scrapper:
       await self.scrapper.close()
 
-  def _get_initial_messages(self, url, site_info, query, all_results):
-    init_msg = self.get_initial_message(url, site_info, query, all_results)
-    self.logger.debug(f"[👤] {init_msg}")
-
-    init_msgs = [
-      { "role": "user", "content": init_msg },
-      { "role": "assistant", "content": "Estou em uma nova página\ndevo extrair um resumo\n-####-\npage_summary()"}
-    ]
+  async def run(self, recursion_limit: int = 100):
+    """
+    Run the navigation flow.
+    Args:
+      recursion_limit: Maximum number of recursion steps.
+    """
+    if not self.graph:
+      self.graph = self._build_graph()
     
-    return init_msgs
-
-  def get_initial_message(self, url: str, site_info: str, query: str, all_results: bool):    
-    return self \
-      .get_prompt("init.md") \
-      .replace("{url}", url) \
-      .replace("{site_info}", site_info) \
-      .replace("{query}", query) \
-      .replace("{all}", str(all_results))
-
-
-  def get_prompt(self, prompt_file: str):
-    base_path = os.path.dirname(__file__)
-    prompt_path = os.path.join(base_path, "prompts", prompt_file)
-    with open(prompt_path, "r") as f:
-      return f.read()
+    initial_state = {
+      "messages": [
+        HumanMessage(
+          content=f"Site: {self.url}\nSite_info: {self.site_info}\nQuery: {self.query}\nAll: {self.all_results}"
+        )
+      ]
+    }
     
-  def get_conversation_sample(self):
-    base_path = os.path.dirname(__file__)
-    prompt_path = os.path.join(base_path, "prompts", "extract_products_msgs_sample.json")
-    with open(prompt_path) as f:
-      return json.load(f)
+    config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
+    
+    await self.graph.ainvoke(initial_state, config)
+      
+
+  def _build_graph(self) -> StateGraph:
+    """Build and return the state graph for navigation."""
+    graph_builder = StateGraph(State)
+    
+    async def plan_node(state: State):
+      plan_prompt = self._get_prompt_template("plan")
+      llm_plan = self.llm.model_copy()
+      message = await (plan_prompt | llm_plan).ainvoke(state["messages"])
+      self.logger.debug(f"\nPLAN 🗺️ -> {message.content}")
+      return {"messages": [message]}
+
+    async def act_node(state: State):
+      act_prompt = self._get_prompt_template("act")
+      llm_act = self.llm.model_copy()
+      message = await (act_prompt | llm_act.bind_tools(self.scrapping_tools)).ainvoke(state["messages"])
+      self.logger.debug(f"\nACT 🦾 -> '{message.content}' ferramentas: {message.tool_calls}")
+      return {"messages": [message]}
+
+    async def response_node(state: State):
+      response_prompt = self._get_prompt_template("response")
+      llm_response = self.llm.model_copy()
+      message = await (response_prompt | llm_response).ainvoke(state["messages"])
+      self.logger.debug(f"\nRESPONSE 🔭 -> {message.content}")
+      return {"messages": [message]}
+
+    async def tools_node(state: dict):
+      result = []
+      for tool_call in state["messages"][-1].tool_calls:
+          tool = self.tools_by_name[tool_call["name"]]
+          observation = await tool.ainvoke(tool_call["args"])
+          result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+      self.logger.debug(f"\nTOOLS 🛠️ -> {result}")  
+      return {"messages": result}
+
+    graph_builder.add_node("plan", plan_node)
+    graph_builder.add_node("act", act_node)
+    graph_builder.add_node("response", response_node)
+    graph_builder.add_node("tools", tools_node)
+    
+    def should_end(state: State) -> Literal["act", "response"]:
+      """Decides whether to end the navigation or not."""
+      last_message = state["messages"][-1]
+      result = "act" if "END_NAVIGATION" not in last_message.content else "response"
+      self.logger.debug(f"\nSHOULD_END ❓ -> {result}")
+      return result
+    
+    graph_builder.set_entry_point("plan")
+    graph_builder.add_conditional_edges("plan", should_end)
+    graph_builder.add_edge("act", "tools")
+    graph_builder.add_edge("tools", "plan")
+    graph_builder.add_edge("response", END)
+    
+    memory = MemorySaver()
+    return graph_builder.compile(checkpointer=memory)
   
-  def get_print_description(self, print_path: str) -> str:
-    self.vision_llm.set_system_prompt(self.get_prompt("vision.md"))
-    return self.vision_llm.get_image_response(
-      f"Print: {print_path}\nDescription: ",
-      print_path
-    )
-  
-  def add_print_description(self, action_result):
-    print_path = action_result.splitlines()[0].split(":")[1].strip()
-    print_description = self.get_print_description(print_path)
-    os.remove(print_path)
-    action_result = f"{action_result}\nDescription: {print_description}"
-    return action_result
+  def _get_prompt_template(self, role) -> ChatPromptTemplate:
+    """Return the prompt template for the plan role."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", f"{role}.md")
+    return ChatPromptTemplate.from_messages([
+      ("system", get_prompt(prompt_path)),
+      MessagesPlaceholder("messages")
+    ])

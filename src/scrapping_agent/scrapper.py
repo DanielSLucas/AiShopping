@@ -1,21 +1,14 @@
 from time import time
-import asyncio
 import re
 
 from playwright.async_api import async_playwright
+from langchain_core.tools import tool
 
 class Scrapper:
   def __init__(self):
     self.page = None
     self.broser = None
     self.playwright = None
-    self.commands = {
-      "extract_elements": self._handle_extract_elements,
-      "interact_with_element": self._handle_interact_with_element,
-      "print": self._handle_print,
-      "end": self._handle_end,
-      "page_summary": self._handle_page_summary
-    }
   
   async def initialize(self, url: str, headless: bool = True) -> None:
     self.playwright = await async_playwright().start()
@@ -30,125 +23,164 @@ class Scrapper:
     if self.playwright:
       await self.playwright.stop()
 
-  def run(self, command: str) -> str:
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(self._async_run(command))
-
-  async def _async_run(self, command: str) -> str:
+  async def extract_elements(self, el_selector: str, trunc: bool = True, limit: int = 50, compact: bool = False):
+    """
+      Extracts elements from the page based on the provided selector.
+      Args:
+        el_selector (str): The selector to find elements.
+        trunc (bool): Whether to truncate the text content. Default is True.
+        limit (int): The maximum number of elements to extract. Default is 50.
+        compact (bool): Whether to compact identical elements with a count. Default is False.
+      Returns:
+        str: A formatted string with the extracted elements.
+    """
     try:
-      cmd, args = self._extract_command_and_args(command)
-
-      command_handler = self.commands.get(cmd, self._handle_command_not_found)
-
-      return await command_handler(args)
-    except Exception as e:
-      return f"Error running command '{command}'. Erro: {str(e)}"
-  
-  def _extract_command_and_args(self, command: str):
-    pattern = r"([a-z_]+)\(('.*',?)*\)"
-    match = re.search(pattern, command.strip())
-
-    if match is None:
-      raise Exception("No function match")
-
-    name = match.group(1).strip()
-    args = [arg.strip().strip("'") for arg in re.findall(r"'(.*?)'(?:,?\s*)", match.group(2))] if match.group(2) else []
-
-    return name, args
-  
-  async def _handle_command_not_found(self, _: list[str]):
-    return "Command not found"
-
-  async def _handle_extract_elements(self, args: list[str]):
-    selector = args[0]
-    trunc = False if args[1] == 'False' else True
-    limit = int(args[2]) if len(args) == 3 else 10
-    return await self._extract_elements(selector, trunc, limit)
-
-  async def _extract_elements(self, el_selector: str, trunc:bool, limit: int):
-    elements = await self.page.query_selector_all(el_selector)
-    formatted_elements = []
-    
-    for el in elements:
-      tag_name = (await el.evaluate('el => el.tagName')).lower()
-      element = f"Element: {tag_name}"
-      class_name = (await el.evaluate('el => el.className')).strip()
-      text = re.sub(r'\s+', ' ', (await el.text_content()).strip())
-
-      if class_name:
-        element += f" Classes: {class_name}"
-
-      if text:
-        formatted_text = text if not trunc else text[:50] + "..." if len(text) > 50 else text
-        element += f" Text: {formatted_text}"
-
-      if tag_name == "a":
-        element += f" Href: {await el.get_attribute('href')}"
-
-      if tag_name == "input":
-        placeholder = await el.get_attribute("placeholder") or "no placeholder"
-        element += f" Name: {await el.get_attribute('name')} Placeholder: {placeholder}"
+      elements = await self.page.query_selector_all(el_selector)
+      formatted_elements = []
+      last_element = {'el': None, 'count': 0}
+      
+      for el in elements:
+        element = await self.__serialize_element(el, trunc)
         
-      formatted_elements.append(element)
+        if compact and self.__isDuplicated(last_element, element):
+          updated__last_element = last_element['el'].copy()
+          updated__last_element['Count'] = last_element['count']
+          formatted_elements[-1] = self.__stringfy_element(updated__last_element)
+        else:
+          formatted_elements.append(self.__stringfy_element(element))
 
-      if len(formatted_elements) >= limit:
-        break
+        if len(formatted_elements) >= limit:
+          break
+      
+      if len(formatted_elements) == 0:
+        formatted_elements.append("No elements found")
+
+      return "Extracted elements:\n-" + "\n- ".join(formatted_elements)
+    except Exception as e:
+      return f"Error running 'extract_elements'. Error: {str(e)}"
+
+  async def __serialize_element(self, el, trunc):
+    tag_name = (await el.evaluate('el => el.tagName')).lower()
     
-    if len(formatted_elements) == 0:
-      formatted_elements.append("No elements found")
+    element = { "Element": tag_name }
 
-    return "Extracted elements:\n-" + "\n- ".join(formatted_elements)
-
-  async def _handle_interact_with_element(self, args: list[str]):
-    selector = args[0] 
-    interaction = args[1]
-    text = args[2] if len(args) == 3 else ""
-    return await self._interact_with_element(selector, interaction, text)
-  
-  async def _interact_with_element(self, el_selector: str, interaction: str, text: str):
-    element = await self.page.query_selector(el_selector)
+    class_name = (await el.evaluate('el => el.className')).strip()
+    if class_name:
+      element['Classes'] = class_name
     
-    if element is None:
-      return f"Element with selector '{el_selector}' not found."
+    text = re.sub(r'\s+', ' ', (await el.text_content()).strip())
+    if text:
+      formatted_text = text if not trunc else text[:50] + "..." if len(text) > 50 else text
+      element['Text'] = formatted_text
 
-    if interaction == "click":
-      await element.click()
-      return f"Element '{el_selector}' clicked."
+    if tag_name == "a":
+      element['Href'] = await el.get_attribute("href")
 
-    if interaction == "fill":
-      await element.type(text)
-      return f"Text '{text}' typed in element '{el_selector}'."
+    if tag_name == "input":
+      element['Placeholder'] = await el.get_attribute("placeholder") or "no placeholder"
+      element['Name'] = await el.get_attribute("name") or "no name"
     
-    return "Unsupported interaction."
+    return element
+  
+  def __stringfy_element(self, el):
+    if isinstance(el, dict):
+      return " ".join([f"{key}: {value}" for key, value in el.items()])
+    return str(el)
+  
+  def __isDuplicated(self, last_element, element):
+    if last_element['el'] is None:
+      last_element['el'] = element
+      last_element['count'] = 1
+      return False
 
-  async def _handle_end(self, args: list[str]):
-    return "END"
-  
-  async def _handle_print(self, args: list[str]):
-    return await self._print()
-  
-  async def _print(self):
-    timestamp = str(round(time()))
-    fileName= f"./temp/print_{timestamp}.png"
-    await self.page.screenshot(path=fileName, full_page=True)
-    return f"PRINT: {fileName}"
-  
-  async def _handle_page_summary(self, args: list[str]): 
-    return await self._page_summary()
+    if last_element['el']['Element'] == element['Element'] \
+      and last_element['el']['Classes'] == element['Classes']:
+      last_element['count'] += 1
+      return True
+        
+    last_element['el'] = element
+    last_element['count'] = 1
+    return False
 
-  async def _page_summary(self):
-    url = self.page.url
-    title = await self.page.title()
-    description = await self.page.evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
+  async def interact_with_element(self, el_selector: str, interaction: str, text: str):
+    """
+      Interacts with an element on the page based on the provided selector.
+      Args:
+        el_selector (str): The selector to find the element.
+        interaction (str): The type of interaction to perform (click, fill).
+        text (str): The text to fill in the element if applicable.
+      Returns:
+        str: A message indicating the result of the interaction.
+    """
+    try:
+      element = await self.page.query_selector(el_selector)
+      
+      if element is None:
+        return f"Element with selector '{el_selector}' not found."
+
+      if interaction == "click":
+        await element.click()
+        return f"Element '{el_selector}' clicked."
+
+      if interaction == "fill":
+        await element.type(text)
+        return f"Text '{text}' typed in element '{el_selector}'."
+      
+      return "Unsupported interaction."
+    except Exception as e:
+      return f"Error running 'extract_elements'. Error: {str(e)}"
+  
+  async def print_page(self):
+    """
+      Takes a screenshot of the current page and saves it to a file.
+      Returns:
+        str: The file path of the saved screenshot.
+    """
+    try:
+      timestamp = str(round(time()))
+      fileName= f"./temp/print_{timestamp}.png"
+      await self.page.screenshot(path=fileName, full_page=True)
+      return fileName
+    except Exception as e:
+      return f"Error running 'print_page'. Error: {str(e)}"
+  
+  async def page_summary(self):
+    """
+      Summarizes the current page by extracting the URL, title, description, text elements
+      and interaction elements.
+      Returns:
+        str: A formatted string with the page summary.
+    """
+    try:
+      url = self.page.url
+      title = await self.page.title()
+      description = await self.page.evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
+      
+      text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
+      interaction_elements_tags = "a, button, input"
+
+      text_elements = await self.extract_elements(text_elements_tags, True, 3000, True)
+      interaction_elements = await self.extract_elements(interaction_elements_tags, True, 3000, True)
+
+      return f"URL: {url}\n" \
+        + f"Title: {title}\n" \
+        + f"Description: {description}\n" \
+        + f"Text elements: \n{text_elements}\n" \
+        + f"Interaction elements: \n{interaction_elements}"
+    except Exception as e:
+      return f"Error running 'page_summary'. Error: {str(e)}"
     
-    text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
-    interaction_elements_tags = "a, button, input"
-
-    text_elements = await self._extract_elements(text_elements_tags, True, 1000)
-    interaction_elements = await self._extract_elements(interaction_elements_tags, True, 1000)
-
-    return f"URL: {url}\n" \
-      + f"Title: {title}\n" \
-      + f"Description: {description}\n" \
-      + f"Text elements: \n{text_elements}\n" \
-      + f"Interaction elements: \n{interaction_elements}"
+  async def navigate(self, url: str):
+    """
+      Navigates to a new URL.
+      Args:
+        url (str): The URL to navigate to.
+      Returns:
+        str: A message indicating the result of the navigation.
+    """
+    try:
+      await self.page.goto(url)
+      await self.page.wait_for_load_state()
+      return f"Navigated to {url}"
+    except Exception as e:
+      return f"Error running 'navigate'. Error: {str(e)}"
