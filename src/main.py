@@ -42,7 +42,7 @@ async def extract_data(logger, google_result, query):
   try:
     llm = ChatOpenAI(model="gpt-4o-mini")
 
-    agent = ScrappingAgent(llm, debug=True)
+    agent = ScrappingAgent(llm, debug=False)
     await agent.initialize(google_result['link'], headless=True)
       
     result = await agent.run(query, all_results=True)
@@ -155,15 +155,15 @@ async def main2():
   llm = ChatOpenAI(model="gpt-4o-mini")
 
   agent = ScrappingAgent(llm, debug=True)
-  # await agent.initialize("https://www.mercadolivre.com.br", headless=True)
-  await agent.initialize("https://books.toscrape.com", headless=True)
+  await agent.initialize("https://www.mercadolivre.com.br", headless=True)
+  # await agent.initialize("https://books.toscrape.com", headless=True)
       
-  # result = await agent.run("Quero comprar: Headset gamer, sem fio de até 500 reais", all_results=True)
-  result = await agent.run("Quero comprar: todos os livros de ficção científica", all_results=True)
+  result = await agent.run("Quero comprar: Headset gamer, sem fio de até 500 reais", all_results=True)
+  # result = await agent.run("Quero comprar: todos os livros de ficção científica", all_results=True)
 
   await agent.close()
   print(result)
 
 
 if __name__ == "__main__":
-  asyncio.run(main2())
+  asyncio.run(main())

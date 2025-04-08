@@ -94,7 +94,7 @@ class Scrapper:
       return False
 
     if last_element['el']['Element'] == element['Element'] \
-      and last_element['el']['Classes'] == element['Classes']:
+      and last_element['el'].get('Classes') == element.get('Classes'):
       last_element['count'] += 1
       return True
         

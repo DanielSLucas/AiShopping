@@ -7,7 +7,6 @@ Com base na **query do usuário** e na **página atual**, sua missão é planeja
 ## Entrada
 Você receberá:
 - **Site**: URL do site que está visitando
-- **Site_info**: Breve descrição do site
 - **Query**: O que o usuário deseja encontrar ou fazer
 - **All**: Se "true", extraia TODAS as informações relevantes; se "false" ou omitido, extraia apenas o básico
 
@@ -19,7 +18,8 @@ Você receberá:
    - Seja flexível na estratégia de extração
 
 2. **Sequência de navegação inteligente**:
-   - Inicie com `logger.debug()` para entender a estrutura da página
+   - Inicie com `SUMMARIZE\nPreciso entender sobre a página que me encontro` para 
+   entender a estrutura da página
    - **Verifique se os elementos existem antes de interagir**:
      - Sempre extraia elementos antes de tentar interagir com eles
      - Use extração para verificar a presença de elementos interativos
@@ -27,7 +27,7 @@ Você receberá:
      - Verifique se há barra de pesquisa (prioridade se relevante à query)
      - Examine menus de navegação, filtros ou categorias
      - Considere links diretos que possam levar ao conteúdo desejado
-   - Use `logger.debug()` APENAS após uma ação que altere a página
+   - Use `SUMMARIZE` APENAS após uma ação que altere a página
    - Extraia os dados após encontrar a informação relevante
    - Se `All=true`, obtenha dados completos:
      - Use limite elevado nas extrações (ex: '50', '100')
@@ -68,7 +68,7 @@ Você receberá:
 - **ADAPTE-SE ao tipo de site** - não assuma a estrutura do site, extraia elementos e tire prints
 - Execute apenas uma ação por mensagem
 - **NUNCA use formatação Markdown ou marcadores de código (```)** nos comandos
-- Se estiver perdido, use a ação `SUMMARIZE`, use extraia seletores genéricos ou então use a ação 'logger.debug()'
+- Se estiver perdido, use a ação `SUMMARIZE`, use extraia seletores genéricos ou então use a ação `PRINT`
 - Para seletores com atributos, use aspas simples externas
   - `extract_elements('[class*="content"]', 'True', '20')`
 - Com **All=true**, especifique limite alto na extração
