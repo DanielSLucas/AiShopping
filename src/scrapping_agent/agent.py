@@ -23,23 +23,10 @@ class ScrappingAgent:
   def __init__(
     self,
     llm: BaseChatModel,
-    url: str, 
-    site_info: str, 
-    query: str, 
-    all_results: bool = True, 
     debug: bool = True,
     vision_model = ChatOpenAI(model="gpt-4o")
   ):
-    self.url = url
-    self.site_info = site_info
-    self.query = query
-    self.all_results = all_results
     self.debug = debug
-    
-    self.logger = Logger(
-      file_name=f"{urlparse(url).netloc}_scrap", 
-      show_debug_logs=debug
-    )
     
     self.scrapper = Scrapper()
     self.llm = llm
@@ -49,9 +36,16 @@ class ScrappingAgent:
     self.scrapping_tools = None
     self.tools_by_name = None
 
-  async def initialize(self, headless: bool = True):
+  async def initialize(self, url:str, headless: bool = True):
     """Initialize the scrapper and set up tools."""
-    await self.scrapper.initialize(self.url, headless=headless)
+    self.url = url
+    self.logger = Logger(
+      file_name=f"{urlparse(url).netloc}_scrap", 
+      show_debug_logs=self.debug
+    )
+
+    await self.scrapper.initialize(url, headless=headless)
+
     self.scrapping_tools = make_scrapper_tools(
       self.scrapper,
       vision_model=self.vision_model
@@ -63,10 +57,11 @@ class ScrappingAgent:
     if self.scrapper:
       await self.scrapper.close()
 
-  async def run(self, recursion_limit: int = 100):
+  async def run(self, query: str, all_results: bool = True, recursion_limit: int = 100):
     """
     Run the navigation flow.
     Args:
+      query: The query to search for.
       recursion_limit: Maximum number of recursion steps.
     """
     if not self.graph:
@@ -75,14 +70,16 @@ class ScrappingAgent:
     initial_state = {
       "messages": [
         HumanMessage(
-          content=f"Site: {self.url}\nSite_info: {self.site_info}\nQuery: {self.query}\nAll: {self.all_results}"
+          content=f"Site: {self.url}\nQuery: {query}\nAll: {all_results}"
         )
       ]
     }
     
     config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
     
-    await self.graph.ainvoke(initial_state, config)
+    result = await self.graph.ainvoke(initial_state, config)
+
+    return result["messages"][-1].content
       
 
   def _build_graph(self) -> StateGraph:
@@ -113,9 +110,9 @@ class ScrappingAgent:
     async def tools_node(state: dict):
       result = []
       for tool_call in state["messages"][-1].tool_calls:
-          tool = self.tools_by_name[tool_call["name"]]
-          observation = await tool.ainvoke(tool_call["args"])
-          result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+        tool = self.tools_by_name[tool_call["name"]]
+        observation = await tool.ainvoke(tool_call["args"])
+        result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
       self.logger.debug(f"\nTOOLS 🛠️ -> {result}")  
       return {"messages": result}
 

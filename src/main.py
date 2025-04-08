@@ -5,9 +5,9 @@ import asyncio
 
 from googleapiclient.discovery import build
 from langchain_openai import ChatOpenAI
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
 
 from scrapping_agent.agent import ScrappingAgent
-from llms import LlmOpenAi
 from utils.logger import Logger
 
 google_api_key = getenv("GOOGLE_API_KEY")
@@ -40,17 +40,15 @@ def google_search(query: str, num_results: int):
 
 async def extract_data(logger, google_result, query):
   try:
-    llm = LlmOpenAi("gpt-4o-mini")
-    vision_llm = LlmOpenAi("gpt-4o")
+    llm = ChatOpenAI(model="gpt-4o-mini")
 
-    agent = ScrappingAgent(llm, vision_llm)
+    agent = ScrappingAgent(llm, debug=True)
+    await agent.initialize(google_result['link'], headless=True)
+      
+    result = await agent.run(query, all_results=True)
 
-    return await agent.run(
-      google_result['link'],
-      google_result['title'] + "\n" + google_result['snippet'],
-      query,
-      all_results=True,
-    )
+    await agent.close()
+    return result 
   except:
     return f"Falha ao extrair dados do link {google_result['link']}"
 
@@ -86,12 +84,11 @@ Você é um assitente de compras online.
   - Sua resposta deve estar num formato apropriado para ser exibido no terminal
 """
 
-async def main2():
+async def main():
   start_time = time()
   logger = Logger(show_debug_logs=True)
-  entry_llm = LlmOpenAi("gpt-4o-mini")
-
-  entry_llm.set_system_prompt(entry_prompt)
+  entry_llm = ChatOpenAI(model="gpt-4o-mini")
+  messages = [SystemMessage(content=entry_prompt)]
 
   # 1 - input
   logger.debug("#1 - Query")
@@ -102,14 +99,17 @@ async def main2():
 
   # 2 - verificar se escopo está claro
   logger.debug("#2 - Enviando pedido para o GPT")
-  gpt_response = entry_llm.get_response(query)
+  messages.append(HumanMessage(content=query))
+  gpt_response = entry_llm.invoke(messages).content
+  messages.append(AIMessage(content=gpt_response))
   logger.debug(f"Resposta GPT: '{gpt_response}'")
 
   # 2.1 - pedir mais informações
   if gpt_response.startswith("## SPECIFY ##"):
     specifications = input(gpt_response.removeprefix("## SPECIFY ##").strip()+"\n")
     specifications = f"Especificações: {specifications}"
-    gpt_response = entry_llm.get_response(specifications)
+    messages.append(HumanMessage(content=specifications))
+    gpt_response = entry_llm.invoke(messages).content
   elif not gpt_response.startswith("## SEARCH ##"):
     raise Exception("Algo deu errado na resposta do GPT")
 
@@ -135,11 +135,12 @@ async def main2():
   results_data = "\n\n".join([f"FROM: {result['link']}\nDATA: {result['data']}" for result in results_data])
   logger.debug(f"Resultados da busca:\n\n{results_data}")
   
-  reviwer_llm = LlmOpenAi("gpt-4o-mini")
-  reviwer_llm.set_system_prompt(reviwer_prompt)
-
-  logger.debug("#5 - Montando comparativo")
-  result = reviwer_llm.get_response(results_data)
+  reviwer_llm = ChatOpenAI(model="gpt-4o-mini")
+  review_messages = [
+    SystemMessage(content=reviwer_prompt),
+    HumanMessage(content=results_data)
+  ]
+  result = reviwer_llm.invoke(review_messages).content
 
   # 6 - retonar comparação
   logger.debug("### RESULTADO ###")
@@ -149,30 +150,20 @@ async def main2():
   elapsed_time = end_time - start_time
   logger.debug(f"Elapsed time: {elapsed_time:.4f} seconds")
 
-async def main():
+async def main2():
   """Main function to execute the web navigation agent."""
   llm = ChatOpenAI(model="gpt-4o-mini")
 
-  agent = ScrappingAgent(
-    llm,
-    "https://books.toscrape.com",
-    "All products | Books to Scrape - Sandbox\nBooks · Travel · Mystery · Historical Fiction · Sequential Art · Classics · Philosophy · Romance · Womens Fiction · Fiction · Childrens · Religion ...",
-    "Quero comprar: todos os livros de ficção científica",
-    all_results=True,
-    debug=True
-  )
+  agent = ScrappingAgent(llm, debug=True)
+  # await agent.initialize("https://www.mercadolivre.com.br", headless=True)
+  await agent.initialize("https://books.toscrape.com", headless=True)
+      
+  # result = await agent.run("Quero comprar: Headset gamer, sem fio de até 500 reais", all_results=True)
+  result = await agent.run("Quero comprar: todos os livros de ficção científica", all_results=True)
 
-  # agent = ScrappingAgent(
-  #   llm,
-  #   "https://www.mercadolivre.com.br",
-  #   "Headset Sem Fio No mercadolivre.com.br\nFone de Ouvido Headset Gamer Havit Fuxi-H3 Black, Quad-Mode Com Fio e Sem Fio, Wireless 2,4GHz, Bluetooth, Cabo USB-C, Cabo 3,5mm. Surround, Baixa Latência.",
-  #   "Quero comprar: Headset gamer, sem fio de até 500 reais",
-  #   all_results=True,
-  #   debug=True
-  # )
-  await agent.initialize(headless=True)
-  await agent.run()
   await agent.close()
+  print(result)
+
 
 if __name__ == "__main__":
-  asyncio.run(main())
+  asyncio.run(main2())
