@@ -117,21 +117,26 @@ async def main():
   logger.debug("#3 - Busca google")
   google_query = gpt_response.removeprefix("## SEARCH ##").strip().replace('"', "")
   logger.debug(f"Google_query: {google_query}")
-  google_results = google_search(google_query, 3)
+  google_results = google_search(google_query, 5)
   logger.debug(str(google_results))
 
 
   # 3.1 - buscar conteudo das urls
   logger.debug("#4 - Extraindo dados das URLs")
-  results_data = []
+  extraction_tasks = []
   for google_result in google_results:
     logger.debug(f"Extraindo dados de {google_result['link']}")
-    results_data.append(
-      {
-        "link": google_result['link'],
-        "data": await extract_data(logger, google_result, f"{query}\n{specifications}")
-      }
-    )
+    task = extract_data(logger, google_result, f"{query}\n{specifications}")
+    extraction_tasks.append(task)
+  
+  results = await asyncio.gather(*extraction_tasks)
+  results_data = [
+    {
+      "link": google_results[i]['link'],
+      "data": results[i]
+    }
+    for i in range(len(google_results))
+  ]
   results_data = "\n\n".join([f"FROM: {result['link']}\nDATA: {result['data']}" for result in results_data])
   logger.debug(f"Resultados da busca:\n\n{results_data}")
   
