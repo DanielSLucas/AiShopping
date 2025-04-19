@@ -117,6 +117,9 @@ class Scrapper:
       
       if element is None:
         return f"Element with selector '{el_selector}' not found."
+      
+      if not await element.is_visible():
+        return f"Element '{el_selector}' is not visible."
 
       if interaction == "click":
         await element.click()

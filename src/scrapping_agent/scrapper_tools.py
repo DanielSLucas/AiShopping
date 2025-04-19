@@ -79,4 +79,15 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     """
     return await scrapper.navigate(url)
 
-  return [extract_elements, interact_with_element, print_page, page_summary, navigate]
+  @tool
+  async def end_navigation() -> str:
+    """
+    Ends the navigation and closes the browser.
+    Returns:
+        A message indicating the end of the navigation.
+    """
+    return "Say 'END_NAVIGATION' to end the navigation."
+
+  return [extract_elements, interact_with_element, print_page, page_summary, navigate, end_navigation]
+
+  

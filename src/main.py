@@ -40,7 +40,7 @@ def google_search(query: str, num_results: int):
 
 async def extract_data(logger, google_result, query):
   try:
-    llm = ChatOpenAI(model="gpt-4o-mini")
+    llm = ChatOpenAI(model="gpt-4.1-mini")
 
     agent = ScrappingAgent(llm, debug=False)
     await agent.initialize(google_result['link'], headless=True)
@@ -157,14 +157,14 @@ async def main():
 
 async def main2():
   """Main function to execute the web navigation agent."""
-  llm = ChatOpenAI(model="gpt-4o-mini")
+  llm = ChatOpenAI(model="gpt-4.1-mini")
 
   agent = ScrappingAgent(llm, debug=True)
-  await agent.initialize("https://www.mercadolivre.com.br", headless=True)
+  await agent.initialize("https://www.amazon.com.br", headless=False)
   # await agent.initialize("https://books.toscrape.com", headless=True)
       
-  result = await agent.run("Quero comprar: Headset gamer, sem fio de até 500 reais", all_results=True)
-  # result = await agent.run("Quero comprar: todos os livros de ficção científica", all_results=True)
+  result = await agent.run("Quero comprar: Teclado gamer, sem fio ", all_results=False)
+  # result = await agent.run("Quero comprar: todos os livros de ficção", all_results=True)
 
   await agent.close()
   print(result)

@@ -77,6 +77,8 @@ class ScrappingAgent:
     
     config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
     
+    self.logger.debug(f"Site: {self.url}\nQuery: {query}\nAll: {all_results}")
+
     result = await self.graph.ainvoke(initial_state, config)
 
     return result["messages"][-1].content
