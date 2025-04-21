@@ -26,11 +26,11 @@ class ShoppingAgent:
     
     self.graph = None
     self.graph_config = None
+    self.current_node = None
     self.logger = Logger(show_debug_logs=debug)
 
     self.shopping_tools = make_shopping_tools(self.logger)
-    self.receptionist_tools = make_receptionist_tools(self.logger)
-    self.tools_by_name = {tool.name: tool for tool in self.shopping_tools + self.receptionist_tools}
+    self.tools_by_name = {tool.name: tool for tool in self.shopping_tools}
 
   async def run(self, run_input, recursion_limit: int = 100):
     if not self.graph:
@@ -54,10 +54,8 @@ class ShoppingAgent:
 
     self.logger.debug(last_message.content)
     
-    if hasattr(last_message, "tool_calls") \
-      and last_message.tool_calls\
-      and last_message.tool_calls[0]["name"] == "ask_more_details":
-      question = last_message.tool_calls[0]["args"]["question"]
+    if self.current_node == "ASK_HUMAN":
+      question = last_message.content
       return f"ASK_HUMAN:{question}"
     
     return last_message.content
@@ -70,7 +68,7 @@ class ShoppingAgent:
     """Build and return the state graph for navigation."""
     graph_builder = StateGraph(MessagesState)
     
-    receptionist_node = self.make_default_node("receptionist", tools=self.receptionist_tools)
+    receptionist_node = self.make_default_node("receptionist")
     ask_human_node = self.make_ask_human_node()
     researcher_node = self.make_default_node("researcher", tools=self.shopping_tools)
     tools_node = self.make_tools_node()
@@ -83,11 +81,9 @@ class ShoppingAgent:
     graph_builder.add_node("tools", tools_node)
     graph_builder.add_node("analyst", analyst_node)
     graph_builder.add_node("product_reviewer", product_reviewer_node)
-    
-    ask_human_condition = self.make_ask_human_condition()
 
     graph_builder.add_edge(START, "receptionist")
-    graph_builder.add_conditional_edges("receptionist", ask_human_condition)
+    graph_builder.add_edge("receptionist", "ask_human")
     graph_builder.add_edge("ask_human", "researcher")
     graph_builder.add_conditional_edges("researcher", tools_condition)
     graph_builder.add_edge("tools", "analyst")
@@ -99,6 +95,7 @@ class ShoppingAgent:
 
   def make_default_node(self, name: str, tools: list = []):
     async def node(state: MessagesState):
+      self.current_node = name.upper()
       prompt = self._get_prompt_template(name)
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
@@ -119,22 +116,15 @@ class ShoppingAgent:
   def make_ask_human_node(self):
     async def ask_human_node(state):
       self.logger.debug("ASK_HUMAN")
-      tool_call = state["messages"][-1].tool_calls[0]
-      
-      tool_call_id = tool_call["id"]
-      question = tool_call["args"]["question"]
-      self.logger.debug(f"question {question}")
-
-      human_response = interrupt(question)
-      tool_message = {"tool_call_id": tool_call_id, "type": "tool", "content": human_response}
-      self.logger.debug(f"tool_message {tool_message}")
-
-      return {"messages": [tool_message]}
+      self.current_node = "ASK_HUMAN"
+      human_response = interrupt("ASK_HUMAN")
+      return {"messages": [HumanMessage(human_response)]}
     
     return ask_human_node
   
   def make_tools_node(self):
     async def tools_node(state: dict):
+      self.current_node = "TOOLS"
       result = []
       for tool_call in state["messages"][-1].tool_calls:
         tool = self.tools_by_name[tool_call["name"]]
@@ -144,13 +134,3 @@ class ShoppingAgent:
       return {"messages": result}
     
     return tools_node
-
-  def make_ask_human_condition(self):
-    def ask_human_condition(state: MessagesState) -> Literal["ask_human", "researcher"]:
-      """Determine whether more details are needed based on the last message."""
-      self.logger.debug("ASK_HUMAN_CONDITION")
-      last_message = state["messages"][-1]
-      return "ask_human" if last_message.tool_calls else "researcher"
-    
-    return ask_human_condition
-
