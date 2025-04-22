@@ -20,7 +20,9 @@ def google_search(query: str, num_results: int):
       cx=google_cse_id,
       num=num_results,
       lr="lang_pt",
-      dateRestrict=f"y[{current_year}]"
+      dateRestrict=f"y[{current_year}]",
+      siteSearch=["https://www.youtube.com"],
+      siteSearchFilter="e"
     )
     .execute()
   ).get('items', [])
