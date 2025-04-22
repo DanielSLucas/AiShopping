@@ -15,12 +15,11 @@ def make_receptionist_tools(logger: Logger) -> list:
     Returns:
       A string containing the answer.
     """
-    print(f"TOOL_CALLED")
     return f"Please provide more details about your request: {question}"
 
   return [ask_more_details]
 
-def make_shopping_tools(logger: Logger) -> list:
+def make_researcher_tools(logger: Logger) -> list:
   @tool
   async def web_search(query: str) -> str:
     """
@@ -44,4 +43,16 @@ def make_shopping_tools(logger: Logger) -> list:
 
     return "---\n".join(link_n_data)
   
-  return [web_search]
+  @tool
+  async def save_relevant_data(key: str, value: str) -> str:
+    """
+    Save relevant information from your research for the analyst use later.
+    Args:
+      key: The key to save the information under.
+      value: The value to save.
+    Returns:
+      A string "Saved!"
+    """
+    return "Saved!"
+  
+  return [web_search, save_relevant_data]

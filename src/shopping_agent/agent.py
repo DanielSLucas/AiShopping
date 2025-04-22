@@ -1,18 +1,24 @@
 import os
-from typing import Literal
+from typing import Annotated, Literal
+from typing_extensions import TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import MessagesState
-from langgraph.prebuilt import tools_condition
+from langgraph.graph.message import add_messages
 from langgraph.types import interrupt, Command
 
-from shopping_agent.tools import make_receptionist_tools, make_shopping_tools
+from shopping_agent.tools import make_researcher_tools
 from utils.logger import Logger
 from utils.utils import get_prompt
+
+class State(TypedDict):
+  messages: Annotated[list, add_messages]
+  product: str
+  specifications: str
+  research: list[(str, str)]
 
 class ShoppingAgent:
   def __init__(
@@ -29,20 +35,29 @@ class ShoppingAgent:
     self.current_node = None
     self.logger = Logger(show_debug_logs=debug)
 
-    self.shopping_tools = make_shopping_tools(self.logger)
-    self.tools_by_name = {tool.name: tool for tool in self.shopping_tools}
+    self.researcher_tools = make_researcher_tools(self.logger)
+    self.tools_by_name = {tool.name: tool for tool in self.researcher_tools}
 
   async def run(self, run_input, recursion_limit: int = 100):
     if not self.graph:
       self.graph = self._build_graph()
     
-    state = MessagesState(messages=[HumanMessage(content=run_input)]) if isinstance(run_input, str) else run_input
+    state = None
+    if isinstance(run_input, str):
+      state = State(
+        messages=[HumanMessage(content=run_input)],
+        product=run_input,
+        specifications="",
+        research=[],
+      )
+    else: 
+      state = run_input
     
     if not self.graph_config:
       self.graph_config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
     
     events = self.graph.astream(
-      state ,
+      state,
       self.graph_config,
       stream_mode="values"
     )
@@ -52,8 +67,6 @@ class ShoppingAgent:
       if "messages" in event:
         last_message = event["messages"][-1]
 
-    self.logger.debug(last_message.content)
-    
     if self.current_node == "ASK_HUMAN":
       question = last_message.content
       return f"ASK_HUMAN:{question}"
@@ -65,36 +78,34 @@ class ShoppingAgent:
     await self.run(command)
 
   def _build_graph(self) -> StateGraph:
-    """Build and return the state graph for navigation."""
-    graph_builder = StateGraph(MessagesState)
+    graph_builder = StateGraph(State)
     
     receptionist_node = self.make_default_node("receptionist")
     ask_human_node = self.make_ask_human_node()
-    researcher_node = self.make_default_node("researcher", tools=self.shopping_tools)
+    researcher_node = self.make_default_node("researcher", tools=self.researcher_tools)
     tools_node = self.make_tools_node()
-    analyst_node = self.make_default_node("analyst")
-    product_reviewer_node = self.make_default_node("product_reviewer")
+    analyst_node = self.make_analyst_node()
 
     graph_builder.add_node("receptionist", receptionist_node)
     graph_builder.add_node("ask_human", ask_human_node)
     graph_builder.add_node("researcher", researcher_node)
     graph_builder.add_node("tools", tools_node)
     graph_builder.add_node("analyst", analyst_node)
-    graph_builder.add_node("product_reviewer", product_reviewer_node)
+
+    tools_condition = self.make_tools_condition()
 
     graph_builder.add_edge(START, "receptionist")
     graph_builder.add_edge("receptionist", "ask_human")
     graph_builder.add_edge("ask_human", "researcher")
     graph_builder.add_conditional_edges("researcher", tools_condition)
-    graph_builder.add_edge("tools", "analyst")
-    graph_builder.add_edge("analyst",  "product_reviewer")
-    graph_builder.add_edge("product_reviewer", END)
+    graph_builder.add_edge("tools", "researcher")
+    graph_builder.add_edge("analyst",  END)
     
     memory = MemorySaver()
     return graph_builder.compile(checkpointer=memory)
 
   def make_default_node(self, name: str, tools: list = []):
-    async def node(state: MessagesState):
+    async def node(state: State):
       self.current_node = name.upper()
       prompt = self._get_prompt_template(name)
       llm = self.llm.model_copy()
@@ -114,23 +125,69 @@ class ShoppingAgent:
     ])
   
   def make_ask_human_node(self):
-    async def ask_human_node(state):
-      self.logger.debug("ASK_HUMAN")
+    async def ask_human_node(state: State):
       self.current_node = "ASK_HUMAN"
       human_response = interrupt("ASK_HUMAN")
-      return {"messages": [HumanMessage(human_response)]}
+      self.logger.debug(f"ASK_HUMAN 👤-> {human_response}")
+      return {
+        "messages": [HumanMessage(human_response)],
+        "specifications": human_response
+      }
     
     return ask_human_node
   
+  def make_analyst_node(self):
+    async def node(state: State):
+      self.current_node = "ANALYST"
+      prompt = self._get_prompt_template("analyst")
+      llm = self.llm.model_copy()
+
+      product = state["product"]
+      specifications = state["specifications"]
+      research = "\n\n".join([f"## {key}:\n{value}" for key, value in state["research"]])
+
+      analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
+      self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
+
+      message = await (prompt | llm).ainvoke({"messages":[HumanMessage(analyst_input)]})
+      self.logger.debug(f"\nANALYST 🤖 -> {message.content}")
+      return {"messages": [message]}
+    
+    return node
+
   def make_tools_node(self):
-    async def tools_node(state: dict):
+    async def tools_node(state: State):
       self.current_node = "TOOLS"
-      result = []
-      for tool_call in state["messages"][-1].tool_calls:
-        tool = self.tools_by_name[tool_call["name"]]
-        observation = await tool.ainvoke(tool_call["args"])
-        result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
-      self.logger.debug(f"\nTOOLS 🛠️ -> {result}")  
-      return {"messages": result}
+      tool_msgs = [
+        await self.handle_tool_call(tool_call, state) 
+        for tool_call in state["messages"][-1].tool_calls
+      ]
+      self.logger.debug(f"\nTOOLS 🛠️ -> {tool_msgs}")  
+      return {"messages": tool_msgs}
     
     return tools_node
+  
+  async def handle_tool_call(self, tool_call, state: State):
+    tool_call_id, tool_name, tool_args = tool_call["id"], tool_call["name"], tool_call["args"]
+    
+    tool = self.tools_by_name[tool_name]
+    result = await tool.ainvoke(tool_args)
+    
+    if tool_name == "save_relevant_data":
+      self.logger.debug(f"\nSaving to memory: {tool_args['key']} -> {tool_args['value']}")  
+      state["research"].append((tool_args["key"], tool_args["value"]))
+
+    return ToolMessage(content=result, tool_call_id=tool_call_id)
+  
+  def make_tools_condition(self):
+    def tools_condition(state: State) -> Literal["tools", "analyst"]:
+      result = "analyst"
+      last_message = state["messages"][-1]
+
+      if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
+        result = "tools"
+      self.logger.debug(f"TOOLS_CONDITION -> {result}")
+
+      return result
+    
+    return tools_condition
