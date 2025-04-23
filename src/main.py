@@ -6,7 +6,7 @@ from scrapping_agent.agent import ScrappingAgent
 from shopping_agent.agent import ShoppingAgent
 
 async def main():
-  llm = ChatOpenAI(model="gpt-4o-mini")
+  llm = ChatOpenAI(model="gpt-4.1-mini")
   agent = ShoppingAgent(llm, debug=True)
 
   user_input = input("O que deseja comprar? ")
