@@ -21,8 +21,7 @@ def google_search(query: str, num_results: int):
       num=num_results,
       lr="lang_pt",
       dateRestrict=f"y[{current_year}]",
-      siteSearch=["https://www.youtube.com"],
-      siteSearchFilter="e"
+      excludeTerms="youtube"
     )
     .execute()
   ).get('items', [])
@@ -38,7 +37,7 @@ def google_search(query: str, num_results: int):
 
 async def extract_data(google_result, query):
   try:
-    llm = ChatOpenAI(model="gpt-4.1-mini")
+    llm = ChatOpenAI(model="gpt-4o-mini")
 
     agent = ScrappingAgent(llm, debug=False)
     await agent.initialize(google_result['link'], headless=True)
