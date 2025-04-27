@@ -1,0 +1,47 @@
+{
+  "site": "https://www.mercadolivre.com.br",
+  "input": {
+    "query": "o que deseja pesquisar no site"
+  },
+  "steps": [
+    {
+      "action": "fill",
+      "selector": "input[type='text']",
+      "text": "{{query}}"
+    },
+    {
+      "action": "click",
+      "selector": "[type='submit']"
+    },
+    {
+      "action": "extract_all",
+      "selector": "li.ui-search-layout__item",
+      "label": "product",
+      "limit": 10,
+      "forEach": [
+        {
+          "action": "extract",
+          "selector": "a.poly-component__title",
+          "properties": {
+            "href": "link", 
+            "innerText": "title"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "div.poly-component__reviews span",
+          "properties": {
+            "innerText": "reviews"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "div.poly-price__current",
+          "properties": {
+            "textContent": "price"
+          }
+        }
+      ]
+    }
+  ]
+}

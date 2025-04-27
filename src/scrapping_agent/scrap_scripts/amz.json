@@ -1,0 +1,54 @@
+{
+  "site": "https://www.amazon.com.br",
+  "input": {
+    "query": "o que deseja pesquisar no site"
+  },
+  "steps": [
+    {
+      "action": "fill",
+      "selector": "input[type='text']",
+      "text": "{{query}}"
+    },
+    {
+      "action": "click",
+      "selector": "[type='submit']"
+    },
+    {
+      "action": "extract_all",
+      "selector": "[data-component-type=\"s-search-result\"]",
+      "label": "product",
+      "limit": 10,
+      "forEach": [
+        {
+          "action": "extract",
+          "selector": "a:nth-child(2)",
+          "properties": {
+            "href": "link", 
+            "innerText": "title"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "div[data-cy=\"reviews-block\"]",
+          "properties": {
+            "innerText": "reviews"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "div[data-cy=\"price-recipe\"] span:nth-child(1) span",
+          "properties": {
+            "innerText": "price"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "div[data-cy=\"delivery-recipe\"]",
+          "properties": {
+            "innerText": "delivery"
+          }
+        }
+      ]
+    }
+  ]
+}
