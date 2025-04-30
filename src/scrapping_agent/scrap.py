@@ -1,62 +1,144 @@
-import os
 import json
 import sys
 import re
+from typing import Dict, List, Any
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Page, ElementHandle
+from utils.logger import Logger
 
-def fill(page, step):
-  page.fill(step["selector"], step["text"])
+class ScrapScriptRunner:
+  def __init__(self, json_file: str, input_values: Dict[str, str], debug: bool = False):
+    self.json_file = json_file
+    self.input_values = input_values
+    self.extracted_data: List[str] = []
+    self.scrap_script: Dict[str, Any] = {}
+    # Extract the base filename without extension for the logger
+    log_name = json_file.split("/")[-1].split(".")[0] if "/" in json_file else json_file.split(".")[0]
+    self.logger = Logger(file_name=f"scrap_{log_name}", show_debug_logs=debug)
 
-def click(page, step):
-  page.click(step["selector"])
-  page.wait_for_load_state()
+    self.actions = {
+      "fill": self.fill,
+      "click": self.click,
+      "extract": self.extract,
+      "extract_all": self.extract_all
+    }
 
-def extract(parent, step):
-  result = []
-  el = parent.query_selector(step["selector"])
-  if el is None:
-    return "Element not found"
-  for prop, label in step["properties"].items():
-    prop_value = el.evaluate(f"el => el.{prop}").replace(r"\s+", " ").strip()
-    result.append(f"{label.upper()}: {prop_value}")
-  return "\n".join(result)
+  def fill(self, page: Page, step: Dict[str, str]) -> None:
+    page.fill(step["selector"], step["text"])
 
-def extract_all(page, step):
-  step_label = step["label"].upper()
-  limit = step["limit"]
-  result = []
-  page.wait_for_selector(step["selector"])
-  for i, el in enumerate(page.query_selector_all(step["selector"])):
-    if i >= limit: break
-    result.append("\n".join([f"{step_label} #{i+1}"] + [extract(el, in_step) for in_step in step["forEach"]]))
-  return "\n".join(result)
+  def click(self, page: Page, step: Dict[str, str]) -> None:
+    page.click(step["selector"])
+    page.wait_for_load_state()
 
-actions = {
-  "fill": fill,
-  "click": click,
-  "extract": extract,
-  "extract_all": extract_all
-}
+  def extract(self, parent: Page | ElementHandle, step: Dict[str, Any]) -> str:
+    result = []
+    el = parent.query_selector(step["selector"])
+    if el is None:
+        return "Element not found"
+    for prop, label in step["properties"].items():
+        prop_value = el.evaluate(f"el => el.{prop}").replace(r"\s+", " ").strip()
+        result.append(f"{label.upper()}: {prop_value}")
+    return "\n".join(result)
 
-def replace_placeholders(obj, input_values):
-  if isinstance(obj, dict):
-    for key, value in obj.items():
-      obj[key] = replace_placeholders(value, input_values)
-  elif isinstance(obj, list):
-    for i, item in enumerate(obj):
-      obj[i] = replace_placeholders(item, input_values)
-  elif isinstance(obj, str):
-    for var_name, var_value in input_values.items():
-      placeholder = f"{{{{{var_name}}}}}"
-      if placeholder in obj:
-        obj = obj.replace(placeholder, var_value)
-  return obj
+  def extract_all(self, page: Page, step: Dict[str, Any]) -> str:
+    step_label = step["label"].upper()
+    limit = step["limit"]
+    result = []
+    page.wait_for_selector(step["selector"])
+    for i, el in enumerate(page.query_selector_all(step["selector"])):
+        if i >= limit: break
+        result.append("\n".join([f"{step_label} #{i+1}"] + [self.extract(el, in_step) for in_step in step["forEach"]]))
+    return "\n".join(result)
 
-def parse_args():
+  def run(self) -> str:
+    self.load_script()
+    self.validate_inputs()
+    self.scrap_script = self.replace_placeholders(self.scrap_script)
+
+    with sync_playwright() as p:
+      browser = p.chromium.launch(headless=False)
+      page = browser.new_page()
+
+      self.logger.debug(f"Accessing '{self.scrap_script['site']}'")
+
+      page.goto(self.scrap_script["site"])
+      page.wait_for_load_state()
+
+      for step in self.scrap_script["steps"]:
+        action = self.actions[step["action"]]
+
+        self.logger.debug(f"Running '{step['action']}'")
+
+        try:
+          result = action(page, step)
+          if isinstance(result, str):
+            self.extracted_data.append(result)
+        except Exception as e:
+          self.logger.log(f"Error running '{step['action']}'. Error: {str(e)}")
+          break
+
+      self.logger.debug("Steps finished")
+      browser.close()
+
+    return "\n\n".join(self.extracted_data)
+
+  def load_script(self) -> None:
+    try:
+      with open(self.json_file, 'r') as file:
+        self.scrap_script = json.load(file)
+    except FileNotFoundError:
+      self.logger.log(f"Error: JSON file not found: {self.json_file}")
+      raise FileNotFoundError
+    except json.JSONDecodeError:
+      self.logger.log(f"Error: Invalid JSON format in file: {self.json_file}")
+      raise json.JSONDecodeError
+
+  def validate_inputs(self) -> None:
+    if "input" in self.scrap_script:
+      missing_inputs = []
+      for input_name in self.scrap_script["input"]:
+        if input_name not in self.input_values:
+          missing_inputs.append(input_name)
+
+      if missing_inputs:
+        required_inputs = '\n- '.join([f"{k}: {v}" for k, v in self.scrap_script['input'].items()])
+        self.logger.log(f"Error: Missing required input variables: {', '.join(missing_inputs)}")
+        self.logger.log(f"Required inputs: \n- {required_inputs}")
+        raise ValueError
+
+  def replace_placeholders(self, obj: Any) -> Any:
+    if isinstance(obj, dict):
+      for key, value in obj.items():
+        obj[key] = self.replace_placeholders(value)
+    elif isinstance(obj, list):
+      for i, item in enumerate(obj):
+        obj[i] = self.replace_placeholders(item)
+    elif isinstance(obj, str):
+      for var_name, var_value in self.input_values.items():
+        placeholder = f"{{{{{var_name}}}}}"
+        if placeholder in obj:
+            obj = obj.replace(placeholder, var_value)
+    return obj
+
+  def save_results(self, output_file: str = 'extracted_data.txt') -> None:
+    self.logger.debug("Saving extracted data")
+    with open(output_file, 'w') as file:
+      file.write("\n\n".join(self.extracted_data))
+
+# command line interface
+def main():
+  json_file, input_values = parse_args()
+  scraper = ScrapScriptRunner(json_file, input_values, debug=True)
+  scraper.run()
+  scraper.save_results()
+
+def parse_args() -> tuple[str, Dict[str, str]]:
+  # We'll use a generic name for the CLI logger since we don't know the JSON filename yet
+  logger = Logger(file_name="scrap_cli", show_debug_logs=True)
+
   if len(sys.argv) < 2:
-    print("Error: Missing JSON file path")
-    print("Usage: python scrap.py <json_file> [var_name=\"var value\" ...]")
+    logger.log("Error: Missing JSON file path")
+    logger.log("Usage: python scrap.py <json_file> [var_name=\"var value\" ...]")
     sys.exit(1)
 
   json_file = sys.argv[1]
@@ -65,8 +147,8 @@ def parse_args():
   for arg in sys.argv[2:]:
     match = re.match(r'^([^=]+)=(.+)$', arg.strip())
     if not match:
-      print(f"Error: Invalid input format: '{arg}'")
-      print("Expected format: var_name=\"var value\"")
+      logger.log(f"Error: Invalid input format: '{arg}'")
+      logger.log("Expected format: var_name=\"var value\"")
       sys.exit(1)
 
     var_name, var_value = match.groups()
@@ -74,68 +156,5 @@ def parse_args():
 
   return json_file, input_values
 
-def main(json_file, args):
-  extracted_data = []
-
-  try:
-    script_path = os.path.join(os.path.dirname(__file__), 'scrap_scripts', json_file)
-    with open(script_path, 'r') as file:
-      scrap_script = json.load(file)
-
-      validate_inputs(args, scrap_script)
-
-      scrap_script = replace_placeholders(scrap_script, args)
-
-      with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
-
-        print(f"Accessing '{scrap_script['site']}'")
-
-        page.goto(scrap_script["site"])
-        page.wait_for_load_state()
-
-        for step in scrap_script["steps"]:
-          action = actions[step["action"]]
-
-          print(f"Running '{step['action']}'")
-
-          try:
-            result = action(page, step)
-            if isinstance(result, str):
-              extracted_data.append(result)
-          except Exception as e:
-            print(f"Error running '{step['action']}'. Error: {str(e)}")
-            break
-
-        print("Steps finished")
-
-        browser.close()
-
-    print("Saving extracted data")
-    with open('extracted_data.txt', 'w') as file:
-      file.write("\n\n".join(extracted_data))
-
-  except FileNotFoundError:
-    print(f"Error: JSON file not found: {json_file}")
-    sys.exit(1)
-  except json.JSONDecodeError:
-    print(f"Error: Invalid JSON format in file: {json_file}")
-    sys.exit(1)
-
-def validate_inputs(args, scrap_script):
-  if "input" in scrap_script:
-    missing_inputs = []
-    for input_name in scrap_script["input"]:
-      if input_name not in args:
-        missing_inputs.append(input_name)
-
-    if missing_inputs:
-      required_inputs = '\n- '.join([f"{k}: {v}" for k, v in scrap_script['input'].items()])
-      print(f"Error: Missing required input variables: {', '.join(missing_inputs)}")
-      print(f"Required inputs: \n- {required_inputs}")
-      sys.exit(1)
-
 if __name__ == "__main__":
-  json_file, input_values = parse_args()
-  main(json_file, input_values)
+  main()
