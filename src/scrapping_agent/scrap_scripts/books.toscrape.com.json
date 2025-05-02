@@ -1,0 +1,49 @@
+{
+  "site": "https://books.toscrape.com",
+  "input": {
+    "category_slug": "science-fiction"
+  },
+  "steps": [
+    {
+      "action": "navigate",
+      "url": "https://books.toscrape.com/catalogue/category/books/{{category_slug}}_16/index.html"
+    },
+    {
+      "action": "extract_all",
+      "selector": "article.product_pod",
+      "label": "product",
+      "limit": 50,
+      "forEach": [
+        {
+          "action": "extract",
+          "selector": "h3 > a",
+          "properties": {
+            "title": "title",
+            "href": "link"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": ".price_color",
+          "properties": {
+            "price": "innerText"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": ".instock.availability",
+          "properties": {
+            "availability": "innerText"
+          }
+        },
+        {
+          "action": "extract",
+          "selector": "p.star-rating",
+          "properties": {
+            "rating": "class"
+          }
+        }
+      ]
+    }
+  ]
+}

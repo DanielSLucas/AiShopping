@@ -1,4 +1,8 @@
 import os
+from urllib.parse import urlparse
+from typing import Any, Dict
+
+from scrapping_agent.scrap import ScrapScriptRunner, ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import tool
@@ -86,8 +90,51 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     Returns:
         A message indicating the end of the navigation.
     """
-    return "Say 'END_NAVIGATION' to end the navigation."
+    return "Ending the navigation."
+  
+  @tool
+  async def execute_scrap_script(scrap_script: Dict[str, Any], input_values: Dict[str, str | int]) -> str:
+    """
+      Executes a scrap script with the provided input values.
+      Args:
+        scrap_script: The scrap script to execute.
+        input_values: The input values for the scrap script.
+      Returns:
+        The extracted data from the scrap script.
+    """
+    try:
+      scraper = ScrapScriptRunner(scrap_script, input_values)
+      return await scraper.run()
+    except Exception as e:
+      print(e)
+      return f"Error running 'execute_scrap_script'. Error: {str(e)}"
+    
+  @tool
+  async def save_scrap_script(scrap_script: Dict[str, Any], url: str) -> str:
+    """
+      Saves a scrap script with the provided name.
+      Args:
+        scrap_script: The scrap script to save.
+        url: The url of the site.
+      Returns:
+        A message indicating the result of the save operation.
+    """
+    try:
+      ssm = ScrapScriptsManager()
+      script_name = urlparse(url).netloc
+      ssm.save(script_name, scrap_script)
+      return f"Scrap script '{script_name}' saved."
+    except Exception as e:
+      return f"Error running 'save_scrap_script'. Error: {str(e)}"
 
-  return [extract_elements, interact_with_element, print_page, page_summary, navigate, end_navigation]
-
+  return [
+    extract_elements, 
+    interact_with_element, 
+    print_page, 
+    page_summary, 
+    navigate, 
+    end_navigation,
+    execute_scrap_script,
+    save_scrap_script
+  ]
   

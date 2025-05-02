@@ -122,11 +122,11 @@ class Scrapper:
         return f"Element '{el_selector}' is not visible."
 
       if interaction == "click":
-        await element.click()
+        await element.click(timeout=10000)
         return f"Element '{el_selector}' clicked."
 
       if interaction == "fill":
-        await element.type(text)
+        await element.type(text, timeout=10000)
         return f"Text '{text}' typed in element '{el_selector}'."
       
       return "Unsupported interaction."
