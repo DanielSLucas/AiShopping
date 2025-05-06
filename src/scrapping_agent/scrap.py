@@ -23,7 +23,7 @@ class ScrapScriptRunner:
       "fill": self.fill,
       "click": self.click,
       "extract": self.extract,
-      "extract_all": self.extract_all
+      "for_each": self.for_each
     }
 
   async def navigate(self, page: Page, step: Dict[str, str]) -> None:
@@ -44,18 +44,19 @@ class ScrapScriptRunner:
     if el is None:
       return "Element not found"
     for prop, label in step["properties"].items():
-      prop_value = await el.evaluate(f"el => el.{prop}").replace(r"\s+", " ").strip()
+      prop_value = await el.evaluate(f"el => el.{prop}")
+      prop_value = prop_value.replace(r"\s+", " ").strip() if prop_value else "None"
       result.append(f"{label.upper()}: {prop_value}")
     return "\n".join(result)
 
-  async def extract_all(self, page: Page, step: Dict[str, Any]) -> str:
+  async def for_each(self, page: Page, step: Dict[str, Any]) -> str:
     step_label = step["label"].upper()
     limit = step["limit"]
     result = []
     await page.wait_for_selector(step["selector"], timeout=10000)
     for i, el in enumerate(await page.query_selector_all(step["selector"])):
       if i >= limit: break
-      result.append("\n".join([f"{step_label} #{i+1}"] + [await self.extract(el, in_step) for in_step in step["forEach"]]))
+      result.append("\n".join([f"{step_label} #{i+1}"] + [(await self.extract(el, in_step)) for in_step in step["forEach"]]))
     return "\n".join(result)
 
   async def run(self) -> str:

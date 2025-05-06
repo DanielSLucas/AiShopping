@@ -93,35 +93,41 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     return "Ending the navigation."
   
   @tool
-  async def execute_scrap_script(scrap_script: Dict[str, Any], input_values: Dict[str, str | int]) -> str:
+  async def execute_scrap_script(scrap_script_url: str, input_values: Dict[str, str | int]) -> str:
     """
       Executes a scrap script with the provided input values.
       Args:
-        scrap_script: The scrap script to execute.
+        scrap_script_url: The scrap script to execute.
         input_values: The input values for the scrap script.
       Returns:
         The extracted data from the scrap script.
     """
     try:
+      ssm = ScrapScriptsManager()
+      scrap_script_name = urlparse(scrap_script_url).netloc
+      
+      if not ssm.exists(scrap_script_name):
+        return f"There is no script for this url '{scrap_script_url}'"
+      
+      scrap_script = ssm.get(scrap_script_name)
       scraper = ScrapScriptRunner(scrap_script, input_values)
+
       return await scraper.run()
     except Exception as e:
-      print(e)
       return f"Error running 'execute_scrap_script'. Error: {str(e)}"
     
   @tool
-  async def save_scrap_script(scrap_script: Dict[str, Any], url: str) -> str:
+  async def save_scrap_script(scrap_script: Dict[str, Any]) -> str:
     """
-      Saves a scrap script with the provided name.
+      Saves a scrap script.
       Args:
         scrap_script: The scrap script to save.
-        url: The url of the site.
       Returns:
         A message indicating the result of the save operation.
     """
     try:
       ssm = ScrapScriptsManager()
-      script_name = urlparse(url).netloc
+      script_name = urlparse(scrap_script["site"]).netloc
       ssm.save(script_name, scrap_script)
       return f"Scrap script '{script_name}' saved."
     except Exception as e:

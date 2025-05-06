@@ -21,7 +21,7 @@ def google_search(query: str, num_results: int):
       num=num_results,
       lr="lang_pt",
       dateRestrict=f"y[{current_year}]",
-      excludeTerms="youtube"
+      excludeTerms="youtube tiktok"
     )
     .execute()
   ).get('items', [])
