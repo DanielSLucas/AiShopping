@@ -1,6 +1,6 @@
 import os
 from urllib.parse import urlparse
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, TypedDict
 
 from scrapping_agent.scrap import ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
@@ -14,7 +14,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import HumanMessage, ToolMessage
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.messages import HumanMessage
 
 class State(TypedDict):
   messages: Annotated[list, add_messages]
@@ -88,23 +89,15 @@ class ScrappingAgent:
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
 
-    plan_node = self.make_default_node("plan")
-    act_node = self.make_default_node("act", tools=self.scrapping_tools)
-    response_node = self.make_default_node("response")
-    tools_node = self.make_tools_node()
+    navigator_node = self.make_default_node("navigator", tools=self.scrapping_tools)
+    tools_node = ToolNode(self.scrapping_tools)
 
-    graph_builder.add_node("plan", plan_node)
-    graph_builder.add_node("act", act_node)
-    graph_builder.add_node("response", response_node)
+    graph_builder.add_node("navigator", navigator_node)
     graph_builder.add_node("tools", tools_node)
 
-    should_end_condition = self.make_should_end_condition()
-
-    graph_builder.set_entry_point("plan")
-    graph_builder.add_conditional_edges("plan", should_end_condition)
-    graph_builder.add_edge("act", "tools")
-    graph_builder.add_edge("tools", "plan")
-    graph_builder.add_edge("response", END)
+    graph_builder.set_entry_point("navigator")
+    graph_builder.add_conditional_edges("navigator", tools_condition)
+    graph_builder.add_edge("tools", "navigator")
 
     memory = MemorySaver()
     return graph_builder.compile(checkpointer=memory)
@@ -116,7 +109,13 @@ class ScrappingAgent:
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
       message = await (prompt | llm).ainvoke(state["messages"])
-      self.logger.debug(f"\n{name.upper()} 🤖 -> {message.content}")
+      tool_calls = [
+        f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
+        for tc in message.tool_calls
+      ]
+      self.logger.debug(f"\n{name.upper()} 🤖")
+      self.logger.debug(f"message: {message.content}")
+      self.logger.debug(f"tool_calls: {tool_calls}")
       return {"messages": [message]}
 
     return node
@@ -127,36 +126,3 @@ class ScrappingAgent:
       ("system", get_prompt(prompt_path)),
       MessagesPlaceholder("messages")
     ])
-
-  def make_tools_node(self):
-    async def tools_node(state: State):
-      self.current_node = "TOOLS"
-      tool_msgs = [
-        await self.handle_tool_call(tool_call, state)
-        for tool_call in state["messages"][-1].tool_calls
-      ]
-      self.logger.debug(f"\nTOOLS 🛠️ -> {tool_msgs}")
-      return {"messages": tool_msgs, "should_end": state["should_end"]}
-
-    return tools_node
-
-  async def handle_tool_call(self, tool_call, state: State):
-    tool_call_id, tool_name, tool_args = tool_call["id"], tool_call["name"], tool_call["args"]
-
-    tool = self.tools_by_name[tool_name]
-    result = await tool.ainvoke(tool_args)
-
-    if tool_name == "end_navigation":
-      state["should_end"] = True
-
-    return ToolMessage(content=result, tool_call_id=tool_call_id)
-
-  def make_should_end_condition(self):
-    def should_end_condition(state: State) -> Literal["act", "response"]:
-      """Decides whether to end the navigation or not."""
-      self.logger.debug(f"\nSHOULD_END_STATE ❓ -> {state['should_end']}")
-      result = "response" if state["should_end"] else "act"
-      self.logger.debug(f"\nSHOULD_END_CONDITION ❓ -> {result}")
-      return result
-
-    return should_end_condition

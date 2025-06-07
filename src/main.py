@@ -21,11 +21,11 @@ async def main():
 
 async def main2():
   """Main function to execute the web navigation agent."""
-  llm = ChatOpenAI(model="gpt-4.1-mini")
+  llm = ChatOpenAI(model="o4-mini")
 
   agent = ScrappingAgent(llm, debug=True)
   # await agent.initialize("https://www.amazon.com.br", headless=False)
-  await agent.initialize("https://books.toscrape.com", headless=True)
+  await agent.initialize("https://books.toscrape.com", headless=False)
       
   # result = await agent.run("Quero comprar: Teclado gamer, sem fio ", all_results=False)
   result = await agent.run("Quero comprar: todos os livros de ficção cientifica", all_results=True)

@@ -2,7 +2,7 @@ import os
 from urllib.parse import urlparse
 from typing import Any, Dict
 
-from scrapping_agent.scrap import ScrapScriptRunner, ScrapScriptsManager
+from scrapping_agent.scrap import ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import tool
@@ -93,14 +93,13 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     return "Ending the navigation."
   
   @tool
-  async def execute_scrap_script(scrap_script_url: str, input_values: Dict[str, str | int]) -> str:
+  async def get_scrap_script(scrap_script_url: str) -> dict:
     """
-      Executes a scrap script with the provided input values.
+      Gets a scrap script for the given URL and runs it with the provided input values.
       Args:
-        scrap_script_url: The scrap script to execute.
-        input_values: The input values for the scrap script.
+        scrap_script_url: The URL of the scrap script to run.
       Returns:
-        The extracted data from the scrap script.
+        The scrap script if it exists, or an error message.
     """
     try:
       ssm = ScrapScriptsManager()
@@ -110,9 +109,8 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
         return f"There is no script for this url '{scrap_script_url}'"
       
       scrap_script = ssm.get(scrap_script_name)
-      scraper = ScrapScriptRunner(scrap_script, input_values)
 
-      return await scraper.run()
+      return scrap_script
     except Exception as e:
       return f"Error running 'execute_scrap_script'. Error: {str(e)}"
     
@@ -135,12 +133,10 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
 
   return [
     extract_elements, 
-    interact_with_element, 
-    print_page, 
+    interact_with_element,
     page_summary, 
-    navigate, 
-    end_navigation,
-    execute_scrap_script,
+    navigate,
+    get_scrap_script,
     save_scrap_script
   ]
   
