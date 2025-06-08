@@ -37,7 +37,7 @@ def google_search(query: str, num_results: int):
 
 async def extract_data(google_result, query):
   try:
-    llm = ChatOpenAI(model="gpt-4o-mini")
+    llm = ChatOpenAI(model="o4-mini")
 
     agent = ScrappingAgent(llm, debug=False)
     await agent.initialize(google_result['link'], headless=True)

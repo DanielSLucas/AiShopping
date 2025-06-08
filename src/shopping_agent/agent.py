@@ -13,6 +13,7 @@ from langgraph.types import interrupt, Command
 from shopping_agent.tools import make_researcher_tools
 from utils.logger import Logger
 from utils.utils import get_prompt
+import asyncio
 
 class State(TypedDict):
   messages: Annotated[list, add_messages]
@@ -158,10 +159,10 @@ class ShoppingAgent:
   def make_tools_node(self):
     async def tools_node(state: State):
       self.current_node = "TOOLS"
-      tool_msgs = [
-        await self.handle_tool_call(tool_call, state) 
+      tool_msgs = await asyncio.gather(*[
+        self.handle_tool_call(tool_call, state) 
         for tool_call in state["messages"][-1].tool_calls
-      ]
+      ])
       self.logger.debug(f"\nTOOLS 🛠️ -> {tool_msgs}")  
       return {"messages": tool_msgs}
     
