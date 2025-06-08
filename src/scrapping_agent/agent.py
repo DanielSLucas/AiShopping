@@ -15,7 +15,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
+import time
 
 class State(TypedDict):
   messages: Annotated[list, add_messages]
@@ -59,6 +60,8 @@ class ScrappingAgent:
       await self.scrapper.close()
 
   async def run(self, query: str, all_results: bool = True, recursion_limit: int = 100):
+    start_time = time.time()
+
     if not self.graph:
       self.graph = self._build_graph()
 
@@ -82,6 +85,13 @@ class ScrappingAgent:
     self.logger.debug(initial_message)
 
     result = await self.graph.ainvoke(initial_state, config)
+
+    ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+    total_tokens = sum(msg.usage_metadata.get("total_tokens", 0) for msg in ai_messages)
+    self.logger.debug(f"Total tokens: {total_tokens}")
+
+    execution_time = time.time() - start_time
+    self.logger.debug(f"Execution time: {execution_time:.2f} seconds")
 
     return result["messages"][-1].content
 
@@ -108,6 +118,7 @@ class ScrappingAgent:
       prompt = self._get_prompt_template(name)
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
+
       message = await (prompt | llm).ainvoke(state["messages"])
       tool_calls = [
         f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
@@ -116,6 +127,8 @@ class ScrappingAgent:
       self.logger.debug(f"\n{name.upper()} 🤖")
       self.logger.debug(f"message: {message.content}")
       self.logger.debug(f"tool_calls: {tool_calls}")
+      self.logger.debug(f"tokens: {message.usage_metadata['total_tokens']}")
+
       return {"messages": [message]}
 
     return node
