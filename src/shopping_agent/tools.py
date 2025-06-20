@@ -33,7 +33,7 @@ def make_researcher_tools(logger: Logger) -> list:
     search_results = google_search(query, 3)
 
     logger.debug(f"Extracting data from: {[search_result['link'] for search_result in search_results]}")
-    extraction_tasks = [extract_data(search_result, query) for search_result in search_results]
+    extraction_tasks = [extract_data(search_result, query, logger) for search_result in search_results]
     results = await asyncio.gather(*extraction_tasks)
 
     link_n_data =[

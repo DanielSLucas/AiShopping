@@ -27,9 +27,11 @@ class ScrappingAgent:
     self,
     llm: BaseChatModel,
     debug: bool = True,
-    vision_model = ChatOpenAI(model="gpt-4o")
+    vision_model = ChatOpenAI(model="gpt-4o"),
+    logger: Logger = None
   ):
     self.debug = debug
+    self.logger = logger
 
     self.scrapper = Scrapper()
     self.llm = llm
@@ -42,10 +44,12 @@ class ScrappingAgent:
 
   async def initialize(self, url:str, headless: bool = True):
     self.url = url
-    self.logger = Logger(
-      file_name=f"{urlparse(url).netloc}_scrap",
-      show_debug_logs=self.debug
-    )
+    
+    if not self.logger:
+      self.logger = Logger(
+        file_name=f"{urlparse(url).netloc}_scrap",
+        show_debug_logs=self.debug
+      )
 
     await self.scrapper.initialize(url, headless=headless)
 

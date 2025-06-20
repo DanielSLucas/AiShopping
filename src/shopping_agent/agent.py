@@ -25,16 +25,14 @@ class ShoppingAgent:
   def __init__(
     self,
     llm: BaseChatModel,
-    debug: bool = True,
+    logger: Logger
   ):
-    self.debug = debug
-    
     self.llm = llm
+    self.logger = logger
     
     self.graph = None
     self.graph_config = None
     self.current_node = None
-    self.logger = Logger(show_debug_logs=debug)
 
     self.researcher_tools = make_researcher_tools(self.logger)
     self.tools_by_name = {tool.name: tool for tool in self.researcher_tools}
