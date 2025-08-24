@@ -29,12 +29,13 @@ def make_researcher_tools(logger: Logger) -> list:
     Returns:
       A string containing the search results.
     """
-    logger.debug(f"Searching: {query}")
+    logger.info(f"Searching: {query}")
     search_results = google_search(query, 3)
 
-    logger.debug(f"Extracting data from: {[search_result['link'] for search_result in search_results]}")
+    logger.info(f"Extracting data from: {[search_result['link'] for search_result in search_results]}")
     extraction_tasks = [extract_data(search_result, query, logger) for search_result in search_results]
     results = await asyncio.gather(*extraction_tasks)
+    logger.info(f"Searching finished!")
 
     link_n_data =[
       f"FROM: {google_result['link']}\nDATA: {result}"

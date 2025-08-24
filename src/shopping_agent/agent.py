@@ -42,7 +42,7 @@ class ShoppingAgent:
       self.graph = self._build_graph()
     
     state = State(
-      messages=[HumanMessage(content=f"Query: {product_query}\nSpecifications: {specifications}")],
+      messages=[HumanMessage(content=f"Produto: {product_query}\Especificações: {specifications}")],
       product=product_query,
       specifications=specifications,
       research=[],
@@ -102,7 +102,7 @@ class ShoppingAgent:
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
       message = await (prompt | llm).ainvoke(state["messages"])
-      self.logger.debug(f"\n{name.upper()} 🤖 -> {message.content}")
+      self.logger.info(f"\n{name.upper()} 🤖 -> {message.content}")
       return {"messages": [message]}
     
     return node
@@ -141,7 +141,7 @@ class ShoppingAgent:
       self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
 
       message = await (prompt | llm).ainvoke({"messages":[HumanMessage(analyst_input)]})
-      self.logger.debug(f"\nANALYST 🤖 -> {message.content}")
+      self.logger.info(f"\nANALYST 🤖 -> {message.content}")
       return {"messages": [message]}
     
     return node
@@ -165,7 +165,7 @@ class ShoppingAgent:
     result = await tool.ainvoke(tool_args)
     
     if tool_name == "save_relevant_data":
-      self.logger.debug(f"\nSaving to memory: {tool_args['key']} -> {tool_args['value']}")  
+      self.logger.info(f"\nSaving to memory: {tool_args['key']} -> {tool_args['value']}")  
       state["research"].append((tool_args["key"], tool_args["value"]))
 
     return ToolMessage(content=result, tool_call_id=tool_call_id)

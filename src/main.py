@@ -1,6 +1,9 @@
 import asyncio
 import time
 from uuid import uuid4
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -9,6 +12,104 @@ from langchain_openai import ChatOpenAI
 from scrapping_agent.agent import ScrappingAgent
 from shopping_agent.agent import ShoppingAgent
 from utils.logger import Logger
+
+app = FastAPI()
+chats = {}
+
+class ChatRequest(BaseModel):
+  query: str
+  specifications: str = ""
+
+@app.post("/chats")
+async def create_chat():
+  chat_id = str(uuid4())
+  chats[chat_id] = ""
+  return {"id": chat_id}
+
+@app.get("/chats")
+async def get_chats():
+  return chats
+
+@app.post("/chats/{chat_id}")
+async def chat(chat_id: str, request: ChatRequest, http_request: Request):
+  if chat_id not in chats:
+    raise HTTPException(status_code=404, detail="Chat não encontrado")
+  
+  chats[chat_id] = request.query
+
+  async def event_stream():
+    start_time = time.time()
+    
+    llm = ChatOpenAI(model="gpt-4.1-mini")
+    logger = Logger(show_debug_logs=True, logger_id=chat_id)
+    agent = ShoppingAgent(llm, logger)
+    
+    agent_task = asyncio.create_task(
+      agent.run(request.query, specifications=request.specifications, recursion_limit=100)
+    )
+    
+    try:
+      while not agent_task.done():
+        if await http_request.is_disconnected():
+          agent_task.cancel()
+          yield f"data: [CANCELLED]\n\n"
+          return
+        
+        try:
+          if not logger.LOGS_QUEUE.empty():
+            msg = logger.LOGS_QUEUE.get_nowait()
+            try:
+              parsed_msg = json.loads(msg)
+              if parsed_msg.get("type") != "DEBUG":
+                yield f"data: {msg}\n\n"
+                
+                if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
+                  break
+              continue
+            except json.JSONDecodeError:
+              yield f"data: {msg}\n\n"
+            yield f"data: {msg}\n\n"
+            
+            if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
+              break
+          else:
+            await asyncio.sleep(0.1)
+        except Exception as e:
+          if await http_request.is_disconnected():
+            agent_task.cancel()
+            return
+          await asyncio.sleep(0.1)
+      
+      if not agent_task.cancelled():
+        try:
+          result = await agent_task
+          end_time = time.time()
+          yield f"data: Execution time: {end_time - start_time:.2f}s\n\n"
+          yield f"data: {result}\n\n"
+        except asyncio.CancelledError:
+          yield f"data: [CANCELLED]\n\n"
+        except Exception as e:
+          yield f"data: Error: {str(e)}\n\n"
+      
+      yield f"data: [DONE]\n\n"
+      
+    except asyncio.CancelledError:
+      agent_task.cancel()
+      yield f"data: [CANCELLED]\n\n"
+    except Exception as e:
+      agent_task.cancel()
+      yield f"data: Error: {str(e)}\n\n"
+
+  return StreamingResponse(
+    event_stream(), 
+    media_type="text/event-stream",
+    headers={
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*"
+    }
+  )
+# ------
 
 def log_listener(msg: str):
   print(msg)
@@ -53,4 +154,7 @@ async def run_scrapping_agent():
 
 
 if __name__ == "__main__":
-  asyncio.run(run_shopping_agent_cli())
+  # asyncio.run(run_shopping_agent_cli())
+  import uvicorn
+  import json
+  uvicorn.run(app, host="0.0.0.0", port=3000)
