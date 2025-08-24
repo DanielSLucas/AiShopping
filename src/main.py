@@ -2,6 +2,7 @@ import asyncio
 import time
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -14,6 +15,14 @@ from shopping_agent.agent import ShoppingAgent
 from utils.logger import Logger
 
 app = FastAPI()
+
+app.add_middleware(
+  CORSMiddleware,
+  allow_origins=["*"],
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
+)
 chats = {}
 
 class ChatRequest(BaseModel):
@@ -157,4 +166,5 @@ if __name__ == "__main__":
   # asyncio.run(run_shopping_agent_cli())
   import uvicorn
   import json
+  
   uvicorn.run(app, host="0.0.0.0", port=3000)
