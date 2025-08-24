@@ -1,5 +1,8 @@
 import asyncio
 import time
+from uuid import uuid4
+from dotenv import load_dotenv
+load_dotenv()
 
 from langchain_openai import ChatOpenAI
 
@@ -10,32 +13,32 @@ from utils.logger import Logger
 def log_listener(msg: str):
   print(msg)
 
-async def main():
+async def run_shopping_agent_cli():
   start_time = time.time()
   llm = ChatOpenAI(model="gpt-4.1-mini")
-  logger = Logger(show_debug_logs=True)
-  logger.register_logs_listener(log_listener)
+  logger = Logger(show_debug_logs=True, logger_id=str(uuid4()))
+  logger.LOGS_QUEUE.put = log_listener
   agent = ShoppingAgent(llm, logger)
 
   user_input = input("O que deseja comprar? ")
 
   res = await agent.run(user_input, recursion_limit=100)
 
-  if res.startswith("ASK_HUMAN:"):
-    question = res.removeprefix("ASK_HUMAN:")
-    print(question)
+  if res.startswith("[ASK_HUMAN] "):
+    question = res.removeprefix("[ASK_HUMAN] ")
+    logger.info(question)
     answer = input("User: ")
     start_time = time.time()
-    res = await agent.continue_from_input(answer)
+    res = await agent.run(user_input, specifications=answer, recursion_limit=100)
 
   end_time = time.time()
-  print(f"Tempo de execução: {end_time - start_time:.2f} segundos")
+  logger.info(f"{end_time - start_time:.2f}s")
 
-async def main2():
+async def run_scrapping_agent():
   """Main function to execute the web navigation agent."""
   llm = ChatOpenAI(model="o4-mini")
   logger = Logger(file_name="ml",show_debug_logs=True)
-  logger.register_logs_listener(log_listener)
+  logger.LOGS_QUEUE.put = log_listener
 
   agent = ScrappingAgent(llm, debug=True, logger=logger)
   # await agent.initialize("https://www.mercadolivre.com.br", headless=False)
@@ -50,4 +53,4 @@ async def main2():
 
 
 if __name__ == "__main__":
-  asyncio.run(main2())
+  asyncio.run(run_shopping_agent_cli())

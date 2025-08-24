@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from typing_extensions import TypedDict
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
@@ -37,20 +37,16 @@ class ShoppingAgent:
     self.researcher_tools = make_researcher_tools(self.logger)
     self.tools_by_name = {tool.name: tool for tool in self.researcher_tools}
 
-  async def run(self, run_input, recursion_limit: int = 100):
+  async def run(self, product_query: str, specifications="", recursion_limit: int = 100):
     if not self.graph:
       self.graph = self._build_graph()
     
-    state = None
-    if isinstance(run_input, str):
-      state = State(
-        messages=[HumanMessage(content=run_input)],
-        product=run_input,
-        specifications="",
-        research=[],
-      )
-    else: 
-      state = run_input
+    state = State(
+      messages=[HumanMessage(content=f"Query: {product_query}\nSpecifications: {specifications}")],
+      product=product_query,
+      specifications=specifications,
+      research=[],
+    )
     
     if not self.graph_config:
       self.graph_config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
@@ -66,15 +62,11 @@ class ShoppingAgent:
       if "messages" in event:
         last_message = event["messages"][-1]
 
-    if self.current_node == "ASK_HUMAN":
+    if self.current_node == "ASK_HUMAN" and not specifications:
       question = last_message.content
-      return f"ASK_HUMAN:{question}"
+      return f"[ASK_HUMAN] {question}"
     
-    return last_message.content
-
-  async def continue_from_input(self, user_input: str):
-    command = Command(resume=user_input)
-    await self.run(command)
+    return f"[RESPONSE] {last_message.content}"
 
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
@@ -91,17 +83,17 @@ class ShoppingAgent:
     graph_builder.add_node("tools", tools_node)
     graph_builder.add_node("analyst", analyst_node)
 
+    should_ask_human_condition = self.make_should_ask_human_condition()
     tools_condition = self.make_tools_condition()
 
     graph_builder.add_edge(START, "receptionist")
-    graph_builder.add_edge("receptionist", "ask_human")
-    graph_builder.add_edge("ask_human", "researcher")
+    graph_builder.add_conditional_edges("receptionist", should_ask_human_condition)
+    graph_builder.add_edge("ask_human", END)
     graph_builder.add_conditional_edges("researcher", tools_condition)
     graph_builder.add_edge("tools", "researcher")
     graph_builder.add_edge("analyst",  END)
     
-    memory = MemorySaver()
-    return graph_builder.compile(checkpointer=memory)
+    return graph_builder.compile()
 
   def make_default_node(self, name: str, tools: list = []):
     async def node(state: State):
@@ -177,7 +169,14 @@ class ShoppingAgent:
       state["research"].append((tool_args["key"], tool_args["value"]))
 
     return ToolMessage(content=result, tool_call_id=tool_call_id)
-  
+
+  def make_should_ask_human_condition(self):
+    def should_ask_human_condition(state: State) -> Literal["ask_human", "researcher"]:
+      return "researcher" if state["specifications"] else "ask_human"
+    
+    return should_ask_human_condition
+
+
   def make_tools_condition(self):
     def tools_condition(state: State) -> Literal["tools", "analyst"]:
       result = "analyst"
