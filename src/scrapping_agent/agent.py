@@ -1,5 +1,6 @@
 import os
 from urllib.parse import urlparse
+from uuid import uuid4
 from typing import Annotated, TypedDict
 
 from scrapping_agent.scrap import ScrapScriptsManager
@@ -66,6 +67,15 @@ class ScrappingAgent:
   async def run(self, query: str, all_results: bool = True, recursion_limit: int = 100):
     start_time = time.time()
 
+    site_data = await self.scrapper.getSiteData()
+    scraping_context = {
+      **site_data,
+      "id": str(uuid4()),
+      "start_time": start_time,
+      "end_time": None
+    }
+    self.logger.info(scraping_context)
+
     if not self.graph:
       self.graph = self._build_graph()
 
@@ -94,8 +104,8 @@ class ScrappingAgent:
     total_tokens = sum(msg.usage_metadata.get("total_tokens", 0) for msg in ai_messages)
     self.logger.debug(f"Total tokens: {total_tokens}")
 
-    execution_time = time.time() - start_time
-    self.logger.debug(f"Execution time: {execution_time:.2f} seconds")
+    scraping_context["end_time"] = time.time()
+    self.logger.info(scraping_context)
 
     return result["messages"][-1].content
 

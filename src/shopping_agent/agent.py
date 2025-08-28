@@ -19,7 +19,7 @@ class State(TypedDict):
   messages: Annotated[list, add_messages]
   product: str
   specifications: str
-  research: list[(str, str)]
+  research: list[str]
 
 class ShoppingAgent:
   def __init__(
@@ -135,7 +135,7 @@ class ShoppingAgent:
 
       product = state["product"]
       specifications = state["specifications"]
-      research = "\n\n".join([f"## {key}:\n{value}" for key, value in state["research"]])
+      research = "\n\n".join([product for product in state["research"]])
 
       analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
       self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
@@ -165,8 +165,8 @@ class ShoppingAgent:
     result = await tool.ainvoke(tool_args)
     
     if tool_name == "save_relevant_data":
-      self.logger.info(f"\nSaving to memory: {tool_args['key']} -> {tool_args['value']}")  
-      state["research"].append((tool_args["key"], tool_args["value"]))
+      self.logger.info(f"\nSaving to memory: {tool_args['data']}")  
+      state["research"].append(tool_args['data'])
 
     return ToolMessage(content=result, tool_call_id=tool_call_id)
 

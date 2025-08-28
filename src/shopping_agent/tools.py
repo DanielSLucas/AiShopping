@@ -45,12 +45,11 @@ def make_researcher_tools(logger: Logger) -> list:
     return "---\n".join(link_n_data)
   
   @tool
-  async def save_relevant_data(key: str, value: str) -> str:
+  async def save_relevant_data(data: str) -> str:
     """
     Save relevant information from your research for the analyst use later.
     Args:
-      key: The key to save the information under.
-      value: The value to save.
+      data: A JSON string containing the information to save.
     Returns:
       A string "Saved!"
     """

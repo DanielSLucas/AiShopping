@@ -21,12 +21,9 @@ class Logger:
     self.show_debug_logs = show_debug_logs
     self.format_logs = format_logs
   
-  def log(self, *msgs: str | dict):
-    self.display(*msgs, kind="LOG")
-    self.append_to_log_file(*msgs, kind="LOG")
-  
   def info(self, *msgs: str | dict):
     self.display(*msgs, kind="INFO")
+    self.append_to_log_file(*msgs, kind="INFO")
   
   def debug(self, *msgs: str | dict):
     if self.show_debug_logs:

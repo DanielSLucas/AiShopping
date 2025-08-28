@@ -1,3 +1,4 @@
+from urllib.parse import urlparse
 from time import time
 import re
 
@@ -9,13 +10,30 @@ class Scrapper:
     self.page = None
     self.broser = None
     self.playwright = None
+    self.url = None
   
   async def initialize(self, url: str, headless: bool = True) -> None:
     self.playwright = await async_playwright().start()
     self.browser = await self.playwright.chromium.launch(headless=headless)
     self.page = await self.browser.new_page()
+    self.url = url
     await self.page.goto(url)
     await self.page.wait_for_load_state()
+    
+  async def getSiteData(self):
+    el = await self.page.query_selector('link[rel="icon"]')
+    
+    iconHref = await el.evaluate("el => el.href")
+    iconUrl = urlparse(self.url).netloc + iconHref
+
+    title = await self.page.title()
+
+    return {
+      "site": self.url,
+      "icon": iconUrl,
+      "title": title
+    }
+
   
   async def close(self) -> None:
     if self.browser:
