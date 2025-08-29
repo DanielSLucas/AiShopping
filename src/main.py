@@ -46,6 +46,17 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
   
   chats[chat_id] = request.query
 
+
+  def sanitize(s: str) -> str:
+    if not s:
+      return ""
+    # Normaliza quebras e remove duplas / múltiplas quebras
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    while "\n\n" in s:
+      s = s.replace("\n\n", "\\\\")
+    
+    return s.strip()
+
   async def event_stream():
     start_time = time.time()
     
@@ -61,7 +72,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       while not agent_task.done():
         if await http_request.is_disconnected():
           agent_task.cancel()
-          yield f"data: [CANCELLED]\n\n"
+          yield "data: [CANCELLED]\n\n"
           return
         
         try:
@@ -70,44 +81,42 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
             try:
               parsed_msg = json.loads(msg)
               if parsed_msg.get("type") != "DEBUG":
-                yield f"data: {msg}\n\n"
-                
+                yield f"data: {sanitize(msg)}\n\n"
                 if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
                   break
               continue
             except json.JSONDecodeError:
-              yield f"data: {msg}\n\n"
-            yield f"data: {msg}\n\n"
+              yield f"data: {sanitize(msg)}\n\n"
             
             if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
               break
           else:
             await asyncio.sleep(0.1)
-        except Exception as e:
-          if await http_request.is_disconnected():
-            agent_task.cancel()
-            return
-          await asyncio.sleep(0.1)
+        except Exception:
+            if await http_request.is_disconnected():
+              agent_task.cancel()
+              return
+            await asyncio.sleep(0.1)
       
       if not agent_task.cancelled():
         try:
           result = await agent_task
           end_time = time.time()
-          yield f"data: Execution time: {end_time - start_time:.2f}s\n\n"
-          yield f"data: {result}\n\n"
+          yield f"data: {sanitize(f'Execution time: {end_time - start_time:.2f}s')}\n\n"
+          yield f"data: {sanitize(result)}\n\n"
         except asyncio.CancelledError:
-          yield f"data: [CANCELLED]\n\n"
+          yield "data: [CANCELLED]\n\n"
         except Exception as e:
-          yield f"data: Error: {str(e)}\n\n"
+          yield f"data: {sanitize('Error: ' + str(e))}\n\n"
       
-      yield f"data: [DONE]\n\n"
+      yield "data: [DONE]\n\n"
       
     except asyncio.CancelledError:
       agent_task.cancel()
-      yield f"data: [CANCELLED]\n\n"
+      yield "data: [CANCELLED]\n\n"
     except Exception as e:
       agent_task.cancel()
-      yield f"data: Error: {str(e)}\n\n"
+      yield f"data: {sanitize('Error: ' + str(e))}\n\n"
 
   return StreamingResponse(
     event_stream(), 
@@ -118,6 +127,52 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       "Access-Control-Allow-Origin": "*"
     }
   )
+
+# @app.post("/chats/{chat_id}")
+# async def chat(chat_id: str, request: ChatRequest, http_request: Request):
+#   if chat_id not in chats:
+#     raise HTTPException(status_code=404, detail="Chat não encontrado")
+  
+#   chats[chat_id] = request.query
+
+#   async def event_stream():
+
+#     # Caminho do arquivo de log mock
+#     file_path = (Path(__file__).resolve().parent.parent / "logs" / "_2025-08-28_20-35-09.json")
+    
+#     if not file_path.exists():
+#       yield f"data: Error: log file not found: {file_path}\n\n"
+#       yield "data: [DONE]\n\n"
+#       return
+
+#     try:
+#       # Leitura linha a linha e envio como SSE
+#       with file_path.open("r", encoding="utf-8") as f:
+#         for line in f:
+#           if await http_request.is_disconnected():
+#             yield "data: [CANCELLED]\n\n"
+#             return
+#           line = line.rstrip("\n")
+#             # Ignora linhas vazias
+#           if not line.strip():
+#             continue
+#           yield f"data: {line}\n\n"
+#           await asyncio.sleep(0.05)  # pequeno delay para simular streaming
+      
+#       yield "data: [DONE]\n\n"
+#     except Exception as e:
+#       yield f"data: Error: {str(e)}\n\n"
+#       yield "data: [DONE]\n\n"
+
+#   return StreamingResponse(
+#     event_stream(),
+#     media_type="text/event-stream",
+#     headers={
+#       "Cache-Control": "no-cache",
+#       "Connection": "keep-alive",
+#       "Access-Control-Allow-Origin": "*"
+#     }
+#   )
 # ------
 
 def log_listener(msg: str):

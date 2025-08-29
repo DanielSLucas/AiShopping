@@ -21,10 +21,7 @@ class Scrapper:
     await self.page.wait_for_load_state()
     
   async def getSiteData(self):
-    el = await self.page.query_selector('link[rel="icon"]')
-    
-    iconHref = await el.evaluate("el => el.href")
-    iconUrl = urlparse(self.url).netloc + iconHref
+    iconUrl = "https://www.google.com/s2/favicons?domain=" + urlparse(self.url).netloc
 
     title = await self.page.title()
 

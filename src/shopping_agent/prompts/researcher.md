@@ -37,7 +37,8 @@ Você é um pesquisador especializado em encontrar as melhores opções de produ
 ## Formato para Salvar Dados
 ```json
 {{
-   "product_name": "[Nome do Produto]",
+   "name": "[Nome do Produto]",
+   "image": "[URL de imagem do Produto]",
    "model": "[Número do Modelo Exato]",
    "specifications": {{
       "especificacao_1": "[Valor da especificação]",
