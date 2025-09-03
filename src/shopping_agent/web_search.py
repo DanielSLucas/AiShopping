@@ -45,6 +45,6 @@ async def extract_data(google_result, query, logger):
     result = await agent.run(query, all_results=True)
 
     await agent.close()
-    return result 
+    return result["content"]
   except:
     return f"Falha ao extrair dados do link {google_result['link']}"

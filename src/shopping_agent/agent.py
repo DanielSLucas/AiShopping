@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Annotated, Literal
 from typing_extensions import TypedDict
 
@@ -19,7 +20,7 @@ class State(TypedDict):
   messages: Annotated[list, add_messages]
   product: str
   specifications: str
-  research: list[str]
+  research: list[dict]
 
 class ShoppingAgent:
   def __init__(
@@ -64,9 +65,9 @@ class ShoppingAgent:
 
     if self.current_node == "ASK_HUMAN" and not specifications:
       question = last_message.content
-      return f"[ASK_HUMAN] {question}"
+      return { "type": "ASK_HUMAN", "content": question }
     
-    return f"[RESPONSE] {last_message.content}"
+    return { "type": "RESPONSE", "content": last_message.content }
 
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
@@ -102,7 +103,7 @@ class ShoppingAgent:
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
       message = await (prompt | llm).ainvoke(state["messages"])
-      self.logger.info(f"\n{name.upper()} 🤖 -> {message.content}")
+      self.logger.info({"type": "AGENT", "content": message.content})
       return {"messages": [message]}
     
     return node
@@ -135,13 +136,13 @@ class ShoppingAgent:
 
       product = state["product"]
       specifications = state["specifications"]
-      research = "\n\n".join([product for product in state["research"]])
+      research = "\n\n".join([json.dumps(product) for product in state["research"]])
 
       analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
       self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
 
       message = await (prompt | llm).ainvoke({"messages":[HumanMessage(analyst_input)]})
-      self.logger.info(f"\nANALYST 🤖 -> {message.content}")
+      self.logger.info({"type": "AGENT", "content": message.content})
       return {"messages": [message]}
     
     return node
@@ -165,7 +166,7 @@ class ShoppingAgent:
     result = await tool.ainvoke(tool_args)
     
     if tool_name == "save_relevant_data":
-      self.logger.info(f"\nSaving to memory: {tool_args['data']}")  
+      self.logger.info({"type": "PRODUCTS", "content": tool_args['data']})  
       state["research"].append(tool_args['data'])
 
     return ToolMessage(content=result, tool_call_id=tool_call_id)

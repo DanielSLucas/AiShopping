@@ -29,13 +29,13 @@ def make_researcher_tools(logger: Logger) -> list:
     Returns:
       A string containing the search results.
     """
-    logger.info(f"Searching: {query}")
+    
     search_results = google_search(query, 3)
 
-    logger.info(f"Extracting data from: {[search_result['link'] for search_result in search_results]}")
+    logger.info({"type": "SEARCH", "content": { "query": query, "sites": [search_result['link'] for search_result in search_results] }})
+    
     extraction_tasks = [extract_data(search_result, query, logger) for search_result in search_results]
     results = await asyncio.gather(*extraction_tasks)
-    logger.info(f"Searching finished!")
 
     link_n_data =[
       f"FROM: {google_result['link']}\nDATA: {result}"
@@ -45,11 +45,11 @@ def make_researcher_tools(logger: Logger) -> list:
     return "---\n".join(link_n_data)
   
   @tool
-  async def save_relevant_data(data: str) -> str:
+  async def save_relevant_data(data: dict) -> str:
     """
     Save relevant information from your research for the analyst use later.
     Args:
-      data: A JSON string containing the information to save.
+      data: A dict containing the information to save.
     Returns:
       A string "Saved!"
     """

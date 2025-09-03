@@ -69,10 +69,13 @@ class ScrappingAgent:
 
     site_data = await self.scrapper.getSiteData()
     scraping_context = {
-      **site_data,
-      "id": str(uuid4()),
-      "start_time": start_time,
-      "end_time": None
+      "type": "SITE",
+      "content": {
+        **site_data,
+        "id": str(uuid4()),
+        "start_time": start_time,
+        "end_time": None
+      }
     }
     self.logger.info(scraping_context)
 
@@ -104,10 +107,10 @@ class ScrappingAgent:
     total_tokens = sum(msg.usage_metadata.get("total_tokens", 0) for msg in ai_messages)
     self.logger.debug(f"Total tokens: {total_tokens}")
 
-    scraping_context["end_time"] = time.time()
+    scraping_context["content"]["end_time"] = time.time()
     self.logger.info(scraping_context)
 
-    return result["messages"][-1].content
+    return { "type": "RESPONSE", "content": result["messages"][-1].content }
 
 
   def _build_graph(self) -> StateGraph:

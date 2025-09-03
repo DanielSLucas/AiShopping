@@ -1,5 +1,8 @@
+import uvicorn
 import asyncio
 import time
+import json
+import os
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,17 +49,6 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
   
   chats[chat_id] = request.query
 
-
-  def sanitize(s: str) -> str:
-    if not s:
-      return ""
-    # Normaliza quebras e remove duplas / múltiplas quebras
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    while "\n\n" in s:
-      s = s.replace("\n\n", "\\\\")
-    
-    return s.strip()
-
   async def event_stream():
     start_time = time.time()
     
@@ -72,7 +64,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       while not agent_task.done():
         if await http_request.is_disconnected():
           agent_task.cancel()
-          yield "data: [CANCELLED]\n\n"
+          yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
           return
         
         try:
@@ -81,15 +73,9 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
             try:
               parsed_msg = json.loads(msg)
               if parsed_msg.get("type") != "DEBUG":
-                yield f"data: {sanitize(msg)}\n\n"
-                if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
-                  break
-              continue
+                yield f"data: {msg}\n\n"
             except json.JSONDecodeError:
-              yield f"data: {sanitize(msg)}\n\n"
-            
-            if "[ASK_HUMAN] " in msg or "[RESPONSE] " in msg:
-              break
+              yield f"data: {msg}\n\n"
           else:
             await asyncio.sleep(0.1)
         except Exception:
@@ -97,26 +83,26 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
               agent_task.cancel()
               return
             await asyncio.sleep(0.1)
-      
+
       if not agent_task.cancelled():
         try:
           result = await agent_task
           end_time = time.time()
-          yield f"data: {sanitize(f'Execution time: {end_time - start_time:.2f}s')}\n\n"
-          yield f"data: {sanitize(result)}\n\n"
+          yield "data: " + json.dumps(result) + "\n\n"
+          yield "data: " + json.dumps({"type": "END_TIME", "content": end_time - start_time}) + "\n\n"
         except asyncio.CancelledError:
-          yield "data: [CANCELLED]\n\n"
+          yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
         except Exception as e:
-          yield f"data: {sanitize('Error: ' + str(e))}\n\n"
+          yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
       
-      yield "data: [DONE]\n\n"
+      yield f"data: " + json.dumps({"type": "END", "content": ""}) + "\n\n"
       
     except asyncio.CancelledError:
       agent_task.cancel()
-      yield "data: [CANCELLED]\n\n"
+      yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
     except Exception as e:
       agent_task.cancel()
-      yield f"data: {sanitize('Error: ' + str(e))}\n\n"
+      yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
 
   return StreamingResponse(
     event_stream(), 
@@ -128,44 +114,57 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
     }
   )
 
-# @app.post("/chats/{chat_id}")
-# async def chat(chat_id: str, request: ChatRequest, http_request: Request):
-#   if chat_id not in chats:
-#     raise HTTPException(status_code=404, detail="Chat não encontrado")
+# @app.post("/chats/mock")
+# async def chat_mock(request: ChatRequest, http_request: Request):
+#   """Simula o chat usando arquivos de log pré-gravados"""
   
-#   chats[chat_id] = request.query
+#   # Seleciona o arquivo de log baseado nas specifications
+#   if request.specifications:
+#     log_file = "./logs/_2025-09-02_18-37-38.json"
+#   else:
+#     log_file = "./logs/_2025-09-02_18-37-38_2.json"
+  
+#   # Verifica se o arquivo existe
+#   if not os.path.exists(log_file):
+#     raise HTTPException(status_code=404, detail=f"Arquivo de log não encontrado: {log_file}")
 
 #   async def event_stream():
-
-#     # Caminho do arquivo de log mock
-#     file_path = (Path(__file__).resolve().parent.parent / "logs" / "_2025-08-28_20-35-09.json")
-    
-#     if not file_path.exists():
-#       yield f"data: Error: log file not found: {file_path}\n\n"
-#       yield "data: [DONE]\n\n"
-#       return
-
 #     try:
-#       # Leitura linha a linha e envio como SSE
-#       with file_path.open("r", encoding="utf-8") as f:
+#       with open(log_file, 'r', encoding='utf-8') as f:
 #         for line in f:
 #           if await http_request.is_disconnected():
-#             yield "data: [CANCELLED]\n\n"
+#             yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
 #             return
-#           line = line.rstrip("\n")
-#             # Ignora linhas vazias
-#           if not line.strip():
+          
+#           try:
+#             # Parse da linha do log
+#             log_entry = json.loads(line.strip())
+            
+#             # Filtra apenas logs que não são DEBUG (como na rota original)
+#             if log_entry.get("type") != "DEBUG":
+#               yield f"data: {json.dumps(log_entry)}\n\n"
+            
+#             # Adiciona um pequeno delay para simular o processamento real
+#             await asyncio.sleep(0.5)
+            
+#           except json.JSONDecodeError:
+#             # Se não conseguir fazer parse do JSON, pula a linha
 #             continue
-#           yield f"data: {line}\n\n"
-#           await asyncio.sleep(0.05)  # pequeno delay para simular streaming
+#           except Exception as e:
+#             if await http_request.is_disconnected():
+#               return
+#             continue
       
-#       yield "data: [DONE]\n\n"
+#       # Sinaliza o fim do stream
+#       yield f"data: " + json.dumps({"type": "END", "content": ""}) + "\n\n"
+      
+#     except asyncio.CancelledError:
+#       yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
 #     except Exception as e:
-#       yield f"data: Error: {str(e)}\n\n"
-#       yield "data: [DONE]\n\n"
+#       yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
 
 #   return StreamingResponse(
-#     event_stream(),
+#     event_stream(), 
 #     media_type="text/event-stream",
 #     headers={
 #       "Cache-Control": "no-cache",
@@ -173,6 +172,8 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
 #       "Access-Control-Allow-Origin": "*"
 #     }
 #   )
+
+
 # ------
 
 def log_listener(msg: str):
@@ -189,15 +190,16 @@ async def run_shopping_agent_cli():
 
   res = await agent.run(user_input, recursion_limit=100)
 
-  if res.startswith("[ASK_HUMAN] "):
-    question = res.removeprefix("[ASK_HUMAN] ")
-    logger.info(question)
-    answer = input("User: ")
+  if res["type"] == "ASK_HUMAN":
+    question = res["content"]
+    logger.info(res)
+    answer = input(f"{question}\n\nUser: ")
     start_time = time.time()
     res = await agent.run(user_input, specifications=answer, recursion_limit=100)
 
+  logger.info(res)
   end_time = time.time()
-  logger.info(f"{end_time - start_time:.2f}s")
+  logger.info({"type": "END_TIME", "content": f"{end_time - start_time:.2f}s"})
 
 async def run_scrapping_agent():
   """Main function to execute the web navigation agent."""
@@ -219,7 +221,4 @@ async def run_scrapping_agent():
 
 if __name__ == "__main__":
   # asyncio.run(run_shopping_agent_cli())
-  import uvicorn
-  import json
-  
   uvicorn.run(app, host="0.0.0.0", port=3000)
