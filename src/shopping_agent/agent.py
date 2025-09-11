@@ -15,6 +15,7 @@ from shopping_agent.tools import make_researcher_tools
 from utils.logger import Logger
 from utils.utils import get_prompt
 import asyncio
+from datetime import datetime
 
 class State(TypedDict):
   messages: Annotated[list, add_messages]
@@ -42,8 +43,9 @@ class ShoppingAgent:
     if not self.graph:
       self.graph = self._build_graph()
     
+    current_date = datetime.now().strftime("%d/%m/%Y")
     state = State(
-      messages=[HumanMessage(content=f"Produto: {product_query}\Especificações: {specifications}")],
+      messages=[HumanMessage(content=f"Data: {current_date}\nProduto: {product_query}\nEspecificações: {specifications}")],
       product=product_query,
       specifications=specifications,
       research=[],
