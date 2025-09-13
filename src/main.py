@@ -64,7 +64,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       while not agent_task.done():
         if await http_request.is_disconnected():
           agent_task.cancel()
-          yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
+          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
           return
         
         try:
@@ -73,7 +73,9 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
             try:
               parsed_msg = json.loads(msg)
               if parsed_msg.get("type") != "DEBUG":
-                yield f"data: {msg}\n\n"
+                parsed_msg["content"]["id"] = str(uuid4())
+                data = json.dumps(parsed_msg["content"], ensure_ascii=False)
+                yield f"data: {data}\n\n"
             except json.JSONDecodeError:
               yield f"data: {msg}\n\n"
           else:
@@ -87,22 +89,23 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       if not agent_task.cancelled():
         try:
           result = await agent_task
+          result["id"] = str(uuid4())
           end_time = time.time()
-          yield "data: " + json.dumps(result) + "\n\n"
-          yield "data: " + json.dumps({"type": "END_TIME", "content": end_time - start_time}) + "\n\n"
+          yield "data: " + json.dumps(result, ensure_ascii=False) + "\n\n"
+          yield "data: " + json.dumps({"id": str(uuid4()), "type": "END_TIME", "content": end_time - start_time}) + "\n\n"
         except asyncio.CancelledError:
-          yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
+          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
         except Exception as e:
-          yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
+          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "ERROR", "content": str(e)}) + "\n\n"
       
-      yield f"data: " + json.dumps({"type": "END", "content": ""}) + "\n\n"
+      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "END", "content": ""}) + "\n\n"
       
     except asyncio.CancelledError:
       agent_task.cancel()
-      yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
+      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
     except Exception as e:
       agent_task.cancel()
-      yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
+      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "ERROR", "content": str(e)}) + "\n\n"
 
   return StreamingResponse(
     event_stream(), 
@@ -120,9 +123,9 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
   
 #   # Seleciona o arquivo de log baseado nas specifications
 #   if request.specifications:
-#     log_file = "./logs/_2025-09-02_18-37-38.json"
+#     log_file = "./logs/_2025-09-13_15-17-03.json"
 #   else:
-#     log_file = "./logs/_2025-09-02_18-37-38_2.json"
+#     log_file = "./logs/_2025-09-13_15-16-28.json"
   
 #   # Verifica se o arquivo existe
 #   if not os.path.exists(log_file):
@@ -133,7 +136,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
 #       with open(log_file, 'r', encoding='utf-8') as f:
 #         for line in f:
 #           if await http_request.is_disconnected():
-#             yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
+#             yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
 #             return
           
 #           try:
@@ -142,10 +145,12 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
             
 #             # Filtra apenas logs que não são DEBUG (como na rota original)
 #             if log_entry.get("type") != "DEBUG":
-#               yield f"data: {json.dumps(log_entry)}\n\n"
+#               log_entry["content"]["id"] = str(uuid4())
+#               data = json.dumps(log_entry["content"], ensure_ascii=False)
+#               yield f"data: {data}\n\n"
             
 #             # Adiciona um pequeno delay para simular o processamento real
-#             await asyncio.sleep(0.5)
+#             await asyncio.sleep(0.05)
             
 #           except json.JSONDecodeError:
 #             # Se não conseguir fazer parse do JSON, pula a linha
@@ -156,12 +161,12 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
 #             continue
       
 #       # Sinaliza o fim do stream
-#       yield f"data: " + json.dumps({"type": "END", "content": ""}) + "\n\n"
+#       yield f"data: " + json.dumps({"id": str(uuid4()), "type": "END", "content": ""}) + "\n\n"
       
 #     except asyncio.CancelledError:
-#       yield f"data: " + json.dumps({"type": "CANCELLED", "content": ""}) + "\n\n"
+#       yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
 #     except Exception as e:
-#       yield f"data: " + json.dumps({"type": "ERROR", "content": str(e)}) + "\n\n"
+#       yield f"data: " + json.dumps({"id": str(uuid4()), "type": "ERROR", "content": str(e)}) + "\n\n"
 
 #   return StreamingResponse(
 #     event_stream(), 

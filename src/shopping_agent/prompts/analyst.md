@@ -51,12 +51,16 @@ Você receberá informações estruturadas no seguinte formato:
 ## Formato da Resposta
 
 ```
-# Análise Comparativa: [Categoria do Produto]
+# [Categoria do Produto]
 
 ## Contexto do Mercado
 [Breve contextualização sobre a categoria e tendências atuais]
 
-## Análise Individual
+## Comparativo das Melhores Opções
+[Tabela comparativa com as principais características]
+
+<details>
+<summary><b>Análise Individual</b></summary>
 
 ### [Produto 1]
 ✅ **Pontos Fortes**: [lista concisa]
@@ -68,9 +72,7 @@ Você receberá informações estruturadas no seguinte formato:
 [mesmo formato]
 
 [...demais produtos...]
-
-## Comparativo das Melhores Opções
-[Tabela comparativa com as principais características]
+</details>
 
 ## Recomendação
 **Melhor Escolha**: [produto recomendado] - [link]
