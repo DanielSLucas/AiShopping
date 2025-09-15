@@ -17,7 +17,7 @@ class Logger:
   ):
     self.LOGS_QUEUE = Queue()
     self.id = logger_id
-    self.file_name = file_name + f"_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+    self.file_name = file_name + f"{logger_id}.json"
     self.show_debug_logs = show_debug_logs
     self.format_logs = format_logs
   
