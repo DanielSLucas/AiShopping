@@ -3,15 +3,17 @@ import time
 import json
 import os
 from uuid import uuid4
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
 from langchain_openai import ChatOpenAI
 
 from shopping_agent.agent import ShoppingAgent
 from utils.logger import Logger
+from utils.utils import make_log_event, make_sse_data
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -28,17 +30,17 @@ class ChatRequest(BaseModel):
   query: str
   specifications: str = ""
 
-@app.post("/chats")
+@app.post("/api/chats")
 async def create_chat():
   chat_id = str(uuid4())
   chats[chat_id] = ""
   return {"id": chat_id}
 
-@app.get("/chats")
+@app.get("/api/chats")
 async def get_chats():
   return chats
 
-@app.get("/chats/{chat_id}")
+@app.get("/api/chats/{chat_id}")
 async def get_chat(chat_id: str):
   """Busca um chat por ID no arquivo de log correspondente"""
   log_file_path = f"./logs/{chat_id}.json"
@@ -68,7 +70,7 @@ async def get_chat(chat_id: str):
   except Exception as e:
     raise HTTPException(status_code=500, detail=f"Erro ao ler arquivo de log: {str(e)}")
 
-@app.post("/chats/{chat_id}")
+@app.post("/api/chats/{chat_id}")
 async def chat(chat_id: str, request: ChatRequest, http_request: Request):
   if chat_id not in chats:
     raise HTTPException(status_code=404, detail="Chat não encontrado")
@@ -83,9 +85,9 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
     agent = ShoppingAgent(llm, logger)
     
     if request.specifications:
-      logger.info({"id": str(uuid4()), "type": "USER", "content": request.specifications})
+      logger.info(make_log_event(type="USER", content=request.specifications))
     else:
-      logger.info({"id": str(uuid4()), "type": "USER", "content": request.query})
+      logger.info(make_log_event(type="USER", content=request.query))
 
     agent_task = asyncio.create_task(
       agent.run(request.query, specifications=request.specifications, recursion_limit=100)
@@ -95,7 +97,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       while not agent_task.done():
         if await http_request.is_disconnected():
           agent_task.cancel()
-          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
+          yield make_sse_data(make_log_event(type="CANCELLED"))
           return
         
         try:
@@ -105,8 +107,7 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
               parsed_msg = json.loads(msg)
               if parsed_msg.get("type") != "DEBUG":
                 parsed_msg["content"]["id"] = str(uuid4())
-                data = json.dumps(parsed_msg["content"], ensure_ascii=False)
-                yield f"data: {data}\n\n"
+                yield make_sse_data(parsed_msg["content"])
             except json.JSONDecodeError:
               yield f"data: {msg}\n\n"
           else:
@@ -123,21 +124,21 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
           result["id"] = str(uuid4())
           logger.info(result)
           end_time = time.time()
-          yield "data: " + json.dumps(result, ensure_ascii=False) + "\n\n"
-          yield "data: " + json.dumps({"id": str(uuid4()), "type": "END_TIME", "content": end_time - start_time}) + "\n\n"
+          yield make_sse_data(result)
+          yield make_sse_data(make_log_event(type="END_TIME", content=end_time - start_time))
         except asyncio.CancelledError:
-          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
+          yield make_sse_data(make_log_event(type="CANCELLED"))
         except Exception as e:
-          yield f"data: " + json.dumps({"id": str(uuid4()), "type": "ERROR", "content": str(e)}) + "\n\n"
+          yield make_sse_data(make_log_event(type="ERROR", content=str(e)))
       
-      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "END", "content": ""}) + "\n\n"
+      yield make_sse_data(make_log_event(type="END"))
       
     except asyncio.CancelledError:
       agent_task.cancel()
-      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "CANCELLED", "content": ""}) + "\n\n"
+      yield make_sse_data(make_log_event(type="CANCELLED"))
     except Exception as e:
       agent_task.cancel()
-      yield f"data: " + json.dumps({"id": str(uuid4()), "type": "ERROR", "content": str(e)}) + "\n\n"
+      yield make_sse_data(make_log_event(type="ERROR", content=str(e)))
 
   return StreamingResponse(
     event_stream(), 
@@ -148,3 +149,5 @@ async def chat(chat_id: str, request: ChatRequest, http_request: Request):
       "Access-Control-Allow-Origin": "*"
     }
   )
+
+app.mount("/", StaticFiles(directory="public"), name="public")

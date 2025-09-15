@@ -1,4 +1,6 @@
 import base64
+from uuid import uuid4
+import json
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -35,3 +37,11 @@ def describe_web_page_print(vision_llm: BaseChatModel, fileName: str) -> str:
     return description
   except Exception as e:
     return f"Error tryning to describe the page print. Error: {str(e)}"
+  
+def make_log_event(type, content=""):
+  return { "id": str(uuid4()), "type": type, "content": content }
+
+def make_sse_data(data):
+  if isinstance(data, dict):
+    data = json.dumps(data, ensure_ascii=False)
+  return f"data: {data}\n\n"
