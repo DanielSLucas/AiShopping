@@ -138,7 +138,7 @@ class ShoppingAgent:
 
       product = state["product"]
       specifications = state["specifications"]
-      research = "\n\n".join([json.dumps(product) for product in state["research"]])
+      research = "\n\n".join([json.dumps(product, ensure_ascii=False) for product in state["research"]])
 
       analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
       self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")

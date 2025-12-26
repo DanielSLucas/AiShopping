@@ -1,5 +1,4 @@
 import os
-from urllib.parse import urlparse
 from uuid import uuid4
 from typing import Annotated, TypedDict
 
@@ -7,7 +6,7 @@ from scrapping_agent.scrap import ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
 from scrapping_agent.tools import make_scrapper_tools
 from utils.logger import Logger
-from utils.utils import get_prompt
+from utils.utils import extract_domain, get_prompt
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -48,7 +47,7 @@ class ScrappingAgent:
     
     if not self.logger:
       self.logger = Logger(
-        file_name=f"{urlparse(url).netloc}_scrap",
+        file_name=f"{extract_domain(url)}_scrap",
         show_debug_logs=self.debug
       )
 
@@ -84,13 +83,14 @@ class ScrappingAgent:
 
     ssm = ScrapScriptsManager()
 
-    scrap_script_exists = ssm.exists(urlparse(self.url).netloc)
-    scrap_script = ssm.get(urlparse(self.url).netloc) if scrap_script_exists else "None"
+    scrap_script_exists = ssm.exists(extract_domain(self.url))
+    scrap_script = ssm.get(extract_domain(self.url)) if scrap_script_exists else "None"
 
     initial_message = f"Site: {self.url}\n" \
       + f"Query: {query}\n"\
       + f"All: {all_results}\n"\
-      + f"Script: {scrap_script}"
+      + f"SCRIPT: {scrap_script}\n\n"\
+      + f"IMPORTANTE: Se o campo SCRIPT acima não for 'None', sua PRIMEIRA e ÚNICA ação deve ser usar a ferramenta 'execute_scrap_script' adaptando a Query para os inputs do script."
 
     initial_state = State(
       messages=[HumanMessage(initial_message)],

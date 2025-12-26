@@ -177,8 +177,8 @@ class Scrapper:
       text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
       interaction_elements_tags = "a, button, input"
 
-      text_elements = await self.extract_elements(text_elements_tags, True, 3000, True)
-      interaction_elements = await self.extract_elements(interaction_elements_tags, True, 3000, True)
+      text_elements = await self.extract_elements(text_elements_tags, True, 1000, True)
+      interaction_elements = await self.extract_elements(interaction_elements_tags, True, 1000, True)
 
       return f"URL: {url}\n" \
         + f"Title: {title}\n" \

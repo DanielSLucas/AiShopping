@@ -17,7 +17,7 @@ class Logger:
   ):
     self.LOGS_QUEUE = Queue()
     self.id = logger_id
-    self.file_name = file_name + f"{logger_id}.json"
+    self.file_name = file_name + f"_{logger_id}.json"
     self.show_debug_logs = show_debug_logs
     self.format_logs = format_logs
   
@@ -52,4 +52,4 @@ class Logger:
       "id": self.id,
       "type": kind,
       "content": msg
-    })
+    }, ensure_ascii=False)

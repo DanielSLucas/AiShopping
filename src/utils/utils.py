@@ -4,6 +4,7 @@ import json
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+import tldextract
 
 def get_prompt(prompt_file_path: str):
   with open(prompt_file_path, "r") as f:
@@ -45,3 +46,7 @@ def make_sse_data(data):
   if isinstance(data, dict):
     data = json.dumps(data, ensure_ascii=False)
   return f"data: {data}\n\n"
+
+def extract_domain(url: str) -> str:
+  ext = tldextract.extract(url)
+  return f"{ext.domain}.{ext.suffix}"
