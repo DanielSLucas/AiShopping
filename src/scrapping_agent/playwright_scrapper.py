@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 from asyncio import sleep
 from typing import Dict, List, NotRequired, TypedDict
 
-from playwright.async_api import async_playwright, ElementHandle
+from playwright.async_api import async_playwright, ElementHandle, Page
 
 class PlaywrightScrapperActionOptions(TypedDict):
   parent_selector: NotRequired[str]
@@ -18,15 +18,25 @@ class PlaywrightScrapper:
   
   async def initialize(self, url: str, debug: bool = True, timeout = 10000) -> None:
     self.playwright = await async_playwright().start()
-    self.browser = await self.playwright.chromium.launch(headless=not debug)
+    self.browser = await self.playwright.chromium.launch(headless=not debug,)
     self.page = await self.browser.new_page()
     self.page.set_default_timeout(timeout)
+    
     self.timeout = timeout
     self.url = url
     self.debug = debug
     
+    self.page.on("popup", self.__handle_popup())
+    self.page.on("load", lambda p: p.wait_for_load_state())
+
     await self.navigate(url)
-    
+
+  def __handle_popup(self):
+    async def handle(page: Page):
+      await self.navigate(page.url)
+      await page.close()
+    return handle
+
   async def close(self) -> None:
     if self.browser:
       await self.browser.close()
@@ -35,6 +45,10 @@ class PlaywrightScrapper:
 
   async def navigate(self, url: str) -> None:
     await self.page.goto(url)
+    await self.page.wait_for_load_state()
+
+  async def go_back(self) -> None:
+    await self.page.go_back()
     await self.page.wait_for_load_state()
 
   async def getSiteData(self):
@@ -88,12 +102,12 @@ class PlaywrightScrapper:
       await self.__highlight(elements, 2000)
 
     el = elements if all else elements[0]
-    [await e.hover() for e in el] if all else await el.hover()
 
     return el
 
   async def __highlight(self, elements:List[ElementHandle], duration_ms=500):
     for el in elements:
+      await el.hover()
       await el.evaluate("""el => {
         el._originalBorder = el.style.border; 
         el.style.border = '3px solid red';

@@ -2,7 +2,7 @@ import os
 import json
 from asyncio import sleep
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Callable
 
 from utils.logger import Logger
 from utils.utils import extract_domain
@@ -35,14 +35,7 @@ class ScrapScriptRunner:
     self.logger = Logger(file_name=f"scrap_{log_name}", show_debug_logs=debug)
     self.debug = debug
 
-    self.actions = {
-      "navigate": self.navigate,
-      "fill": self.fill,
-      "click": self.click,
-      "extract": self.extract,
-      "for_each": self.for_each,
-      "wait_selector": self.wait_selector
-    }
+    self.actions = ScrapScriptsStepActions(self.execute_step)
 
   async def run(self) -> str:
     self.validate_inputs()
@@ -92,23 +85,49 @@ class ScrapScriptRunner:
     return obj
   
   async def execute_step(self, scrapper: PlaywrightScrapper, step: Dict[str, Any]) -> Dict | bool:
-    action = self.actions[step["action"]]
+    action_name = step["action"]
+    action = self.actions.get_action(action_name)
 
-    self.logger.info(f"Running {step['action']}")
+    self.logger.info(f"Running {action_name}")
     self.logger.debug(f"Step {step}")
 
     try:
       await sleep(step.get('sleep', 0)/1000)
       result = await action(scrapper, step)
-      self.logger.debug(f"Success running '{step['action']}'!")
+      self.logger.debug(f"Success running '{action_name}'!")
 
       return result if result is not None else True
     except Exception as e:
-      self.logger.debug(f"Error running '{step['action']}'. {type(e).__name__}: {str(e)}")
+      self.logger.debug(f"Error running '{action_name}'. {type(e).__name__}: {str(e)}")
       return not step.get("stopOnError", True)
   
+
+class ScrapScriptsStepActions:
+  def __init__(self, execute_step_cb: Callable[[PlaywrightScrapper,dict], bool | dict]):
+    self.execute_step = execute_step_cb
+    self.__actions = {
+      "navigate": self.navigate,
+      "go_back": self.go_back,
+      "fill": self.fill,
+      "click": self.click,
+      "extract": self.extract,
+      "for_each": self.for_each,
+      "wait_selector": self.wait_selector
+    }
+
+  def get_actions(self):
+    return self.__actions
+  
+  def get_action(self, name: str):
+    if name not in self.__actions:
+      raise NameError(f"No action named `{name}`")
+    return self.__actions[name]
+
   async def navigate(self, scrapper: PlaywrightScrapper, step: Dict[str, str]) -> None:
     await scrapper.navigate(step["url"])
+
+  async def go_back(self, scrapper: PlaywrightScrapper, step: Dict[str, str]) -> None:
+    await scrapper.go_back()
 
   async def fill(self, scrapper: PlaywrightScrapper, step: Dict[str, str]) -> None:
     await scrapper.fill(step["selector"], step["text"], { "parent_selector": step.get("parentSelector"), "parent_index": step.get("parentIndex") })
@@ -137,11 +156,13 @@ class ScrapScriptRunner:
       rst = {}
 
       for inner_step in steps:
-        inner_step_result = await self.execute_step(scrapper, { 
-          **inner_step, 
-          "parentSelector": step["selector"], 
-          "parentIndex": count 
-        })
+        enriched_step = inner_step.copy()
+        
+        if (not inner_step.get("ignoreParent", False)):
+          enriched_step["parentSelector"] = step["selector"]
+          enriched_step["parentIndex"] = count
+
+        inner_step_result = await self.execute_step(scrapper, enriched_step)
 
         if not inner_step_result:
           count = step.get("limit", 100) +1
@@ -153,4 +174,3 @@ class ScrapScriptRunner:
       result[step_label].append(rst)
 
     return result
-
