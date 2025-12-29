@@ -33,17 +33,18 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     return await scrapper.extract_elements(el_selector, trunc, limit, compact)
 
   @tool
-  async def interact_with_element(el_selector: str, interaction: str, text: str = "") -> str:
+  async def interact_with_element(el_selector: str, interaction: str, text: str = "", is_download=False) -> str:
     """
     Interacts with an element on the page based on the provided selector.
     Args:
         el_selector: The selector to find the element.
         interaction: The type of interaction to perform (click, fill).
         text: The text to fill in the element if applicable.
+        is_download: Wheather or not the click will start a download to be awaited
     Returns:
         A message indicating the result of the interaction.
     """
-    return await scrapper.interact_with_element(el_selector, interaction, text)
+    return await scrapper.interact_with_element(el_selector, interaction, text, is_download)
 
   @tool
   async def print_page() -> str:

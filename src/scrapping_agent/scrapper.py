@@ -1,3 +1,4 @@
+import os
 from urllib.parse import urlparse
 from time import time
 import re
@@ -117,7 +118,7 @@ class Scrapper:
     last_element['count'] = 1
     return False
 
-  async def interact_with_element(self, el_selector: str, interaction: str, text: str):
+  async def interact_with_element(self, el_selector: str, interaction: str, text: str, is_download=False):
     """
       Interacts with an element on the page based on the provided selector.
       Args:
@@ -137,7 +138,12 @@ class Scrapper:
         return f"Element '{el_selector}' is not visible."
 
       if interaction == "click":
+        download_event = self.page.wait_for_event("download") if is_download else None
         await element.click(timeout=10000)
+        if is_download:
+          download = await download_event
+          path = os.path.join("temp", download.suggested_filename)
+          await download.save_as(path)
         return f"Element '{el_selector}' clicked."
 
       if interaction == "fill":

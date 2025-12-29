@@ -15,12 +15,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import time
 
 class State(TypedDict):
+  query: str
+  all_results: bool
   messages: Annotated[list, add_messages]
-  should_end: bool
+  actions_history: list[str]
+  tokens: int
 
 class ScrappingAgent:
   def __init__(
@@ -93,8 +96,11 @@ class ScrappingAgent:
       + f"IMPORTANTE: Se o campo SCRIPT acima não for 'None', sua PRIMEIRA e ÚNICA ação deve ser usar a ferramenta 'execute_scrap_script' adaptando a Query para os inputs do script."
 
     initial_state = State(
+      query=query,
+      all_results=all_results,
       messages=[HumanMessage(initial_message)],
-      should_end=False
+      actions_history=[],
+      tokens=0
     )
 
     config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
@@ -136,17 +142,21 @@ class ScrappingAgent:
       llm = self.llm.model_copy()
       llm = llm if len(tools) == 0 else llm.bind_tools(tools)
 
-      message = await (prompt | llm).ainvoke(state["messages"])
+      message = await (prompt | llm).ainvoke(state)
       tool_calls = [
         f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
         for tc in message.tool_calls
       ]
+
+      state["actions_history"].extend(tool_calls)
+      state["tokens"] += message.usage_metadata.get('total_tokens', 0)
+
       self.logger.debug(f"\n{name.upper()} 🤖")
       self.logger.debug(f"message: {message.content}")
       self.logger.debug(f"tool_calls: {tool_calls}")
       self.logger.debug(f"tokens: {message.usage_metadata['total_tokens']}")
 
-      return {"messages": [message]}
+      return {"messages": [message], "actions_history": state["actions_history"], "tokens": state["tokens"]}
 
     return node
 
