@@ -13,7 +13,8 @@ class Tools(StrEnum):
   EXTRACT_ELEMENTS = "extract_elements"
   INTERACT_WITH_ELEMENT = "interact_with_element"
   PAGE_SUMMARY = "page_summary"
-  GO_BACK = "GO_BACK"
+  GET_URL = "get_url"
+  GO_BACK = "go_back"
   NAVIGATE = "navigate"
   PRINT_PAGE = "print_page"  
   EXECUTE_SCRAP_SCRIPT = "execute_scrap_script"
@@ -89,9 +90,18 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     """
     Navigate back to the previous page
     Returns:
-      Str
+      A message confirming the navigation or not
     """
     return await scrapper.go_back()
+
+  @tool
+  async def get_url() -> str:
+    """
+    Get the current url 
+    Returns:
+      A message with the current url
+    """
+    return scrapper.get_url()
 
   @tool
   async def navigate(url: str) -> str:
@@ -175,6 +185,7 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     Tools.INTERACT_WITH_ELEMENT: interact_with_element,
     Tools.PAGE_SUMMARY: page_summary, 
     Tools.NAVIGATE: navigate,
+    Tools.GET_URL: get_url,
     Tools.GO_BACK: go_back,
     Tools.PRINT_PAGE: print_page,
     Tools.EXECUTE_SCRAP_SCRIPT: execute_scrap_script,

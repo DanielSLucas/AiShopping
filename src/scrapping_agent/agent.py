@@ -135,7 +135,7 @@ class ScrappingAgent:
     script_executor_node = self.__make_default_node(Nodes.SCRIPT_EXECUTOR, tools=script_executor_tools)
     script_executor_tools_node = self.__make_tools_node(Nodes.SCRIPT_EXECUTOR_TOOLS, tools=script_executor_tools)
 
-    scrapper_tools = [Tools.PAGE_SUMMARY, Tools.EXTRACT_ELEMENTS, Tools.INTERACT_WITH_ELEMENT, Tools.NAVIGATE, Tools.GO_BACK, Tools.PRINT_PAGE]
+    scrapper_tools = [Tools.PAGE_SUMMARY, Tools.EXTRACT_ELEMENTS, Tools.INTERACT_WITH_ELEMENT, Tools.NAVIGATE, Tools.GET_URL, Tools.GO_BACK, Tools.PRINT_PAGE]
     scrapper_node = self.__make_default_node(Nodes.SCRAPPER, tools=scrapper_tools)
     scrapper_tools_node = self.__make_tools_node(Nodes.SCRAPPER_TOOLS, tools=[])
     
