@@ -47,10 +47,12 @@ async def run_scrapping_agent():
   agent = ScrappingAgent(llm, debug=True, logger=logger)
   # await agent.initialize("https://books.toscrape.com", headless=False)
   # await agent.initialize("https://amazon.com.br", headless=False)
-  await agent.initialize("https://jurisdf.tjdft.jus.br/resultado?sinonimos=true&espelho=true&inteiroTeor=false", headless=False)
+  # await agent.initialize("https://jurisdf.tjdft.jus.br/resultado?sinonimos=true&espelho=true&inteiroTeor=false", headless=False)
   # await agent.initialize("https://www2.tjal.jus.br/cjsg/resultadoCompleta.do", headless=False)
+  await agent.initialize("https://sistemas.tjes.jus.br/consulta-jurisprudencia/", headless=False)
       
   result = await agent.run("Trazer link do pdf de 3 processos sobre IPTU", all_results=False)
+  # result = await agent.run("Livros de ficção científica", all_results=False)
 
   await agent.close()
   print(result)

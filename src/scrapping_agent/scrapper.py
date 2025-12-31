@@ -3,41 +3,74 @@ from urllib.parse import urlparse
 from time import time
 import re
 
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Page
 from langchain_core.tools import tool
 
 class Scrapper:
   def __init__(self):
-    self.page = None
-    self.broser = None
-    self.playwright = None
-    self.url = None
+    self.__page = None
+    self.__browser = None
+    self.__playwright = None
+    self.__url = None
+    self.__initialized = False
   
   async def initialize(self, url: str, headless: bool = True) -> None:
-    self.playwright = await async_playwright().start()
-    self.browser = await self.playwright.chromium.launch(headless=headless)
-    self.page = await self.browser.new_page()
-    self.url = url
-    await self.page.goto(url)
-    await self.page.wait_for_load_state()
-    
-  async def getSiteData(self):
-    iconUrl = "https://www.google.com/s2/favicons?domain=" + urlparse(self.url).netloc
+    self.__playwright = await async_playwright().start()
+    self.__browser = await self.__playwright.chromium.launch(headless=headless)
+    self.__page = await self.__browser.new_page()
+    self.__url = url
 
-    title = await self.page.title()
+    self.__page.on("popup", self.__handle_popup())
+    self.__page.on("load", lambda p: p.wait_for_load_state())
+
+    await self.navigate(url)
+    self.__initialized = True
+
+  def __handle_popup(self):
+    async def handle(page: Page):
+      await self.__navigate(page.url)
+      await page.close()
+    return handle
+
+  def __get_page(self) -> Page:
+    if not self.has_been_initialized():
+      raise RuntimeError("You need to call initialize() before doing any action")
+    return self.__page
+
+  async def __navigate(self, url: str):
+    await self.__get_page().goto(url)
+    await self.__get_page().wait_for_load_state()
+  
+  def has_been_initialized(self) -> bool:
+    return self.__initialized
+  
+  def get_url(self):
+    return self.__get_page().url
+
+  async def getSiteData(self):
+    iconUrl = "https://www.google.com/s2/favicons?domain=" + urlparse(self.__url).netloc
+
+    title = await self.__get_page().title()
 
     return {
-      "site": self.url,
+      "site": self.__get_page().url,
       "icon": iconUrl,
       "title": title
     }
-
   
   async def close(self) -> None:
-    if self.browser:
-      await self.browser.close()
-    if self.playwright:
-      await self.playwright.stop()
+    if self.__browser:
+      await self.__browser.close()
+    if self.__playwright:
+      await self.__playwright.stop()
+
+  async def go_back(self):
+    try:
+      await self.__get_page().go_back()
+      await self.__get_page().wait_for_load_state()
+      return "Navigated back to the previous page"
+    except Exception as e:
+      return f"Error running 'go_back'. Error: {str(e)}"
 
   async def extract_elements(self, el_selector: str, trunc: bool = True, limit: int = 50, compact: bool = False):
     """
@@ -51,7 +84,7 @@ class Scrapper:
         str: A formatted string with the extracted elements.
     """
     try:
-      elements = await self.page.query_selector_all(el_selector)
+      elements = await self.__get_page().query_selector_all(el_selector)
       formatted_elements = []
       last_element = {'el': None, 'count': 0}
       
@@ -129,7 +162,7 @@ class Scrapper:
         str: A message indicating the result of the interaction.
     """
     try:
-      element = await self.page.query_selector(el_selector)
+      element = await self.__get_page().query_selector(el_selector)
       
       if element is None:
         return f"Element with selector '{el_selector}' not found."
@@ -138,7 +171,7 @@ class Scrapper:
         return f"Element '{el_selector}' is not visible."
 
       if interaction == "click":
-        download_event = self.page.wait_for_event("download") if is_download else None
+        download_event = self.__get_page().wait_for_event("download") if is_download else None
         await element.click(timeout=10000)
         if is_download:
           download = await download_event
@@ -163,7 +196,7 @@ class Scrapper:
     try:
       timestamp = str(round(time()))
       fileName= f"./temp/print_{timestamp}.png"
-      await self.page.screenshot(path=fileName, full_page=True)
+      await self.__get_page().screenshot(path=fileName, full_page=True)
       return fileName
     except Exception as e:
       return f"Error running 'print_page'. Error: {str(e)}"
@@ -176,9 +209,9 @@ class Scrapper:
         str: A formatted string with the page summary.
     """
     try:
-      url = self.page.url
-      title = await self.page.title()
-      description = await self.page.evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
+      url = self.__get_page().url
+      title = await self.__get_page().title()
+      description = await self.__get_page().evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
       
       text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
       interaction_elements_tags = "a, button, input"
@@ -203,8 +236,7 @@ class Scrapper:
         str: A message indicating the result of the navigation.
     """
     try:
-      await self.page.goto(url)
-      await self.page.wait_for_load_state()
+      await self.__navigate(url)
       return f"Navigated to {url}"
     except Exception as e:
       return f"Error running 'navigate'. Error: {str(e)}"

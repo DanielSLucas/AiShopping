@@ -1,14 +1,26 @@
 import os
 from typing import Any, Dict
+from enum import StrEnum
 
 from scrapping_agent.scrap import ScrapScriptsManager, ScrapScriptRunner
 from scrapping_agent.scrapper import Scrapper
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import tool
+from langchain_core.tools import tool, BaseTool
 
 from utils.utils import describe_web_page_print, extract_domain
 
-def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) -> list:
+class Tools(StrEnum):
+  EXTRACT_ELEMENTS = "extract_elements"
+  INTERACT_WITH_ELEMENT = "interact_with_element"
+  PAGE_SUMMARY = "page_summary"
+  GO_BACK = "GO_BACK"
+  NAVIGATE = "navigate"
+  PRINT_PAGE = "print_page"  
+  EXECUTE_SCRAP_SCRIPT = "execute_scrap_script"
+  GET_SCRAP_SCRIPT = "get_scrap_script"
+  SAVE_SCRAP_SCRIPT = "save_scrap_script"
+
+def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, headless: bool = True) -> dict[Tools, BaseTool]:
   """
   Create and return the scrapping tools.
   Args:
@@ -71,6 +83,15 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
         A formatted string with the page summary.
     """
     return await scrapper.page_summary()
+  
+  @tool
+  async def go_back() -> str:
+    """
+    Navigate back to the previous page
+    Returns:
+      Str
+    """
+    return await scrapper.go_back()
 
   @tool
   async def navigate(url: str) -> str:
@@ -81,10 +102,13 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     Returns:
         A message indicating the result of the navigation.
     """
+    if not scrapper.has_been_initialized():
+      return await scrapper.initialize(url, headless)
+
     return await scrapper.navigate(url)
-  
+
   @tool
-  async def execute_scrap_script(scrap_script_url: str, input_values: Dict[str, str | int]) -> str:
+  async def execute_scrap_script(scrap_script_url: str, input_values: dict = {}) -> str:
     """
       Executes a scrap script with the provided input values.
       Args:
@@ -98,17 +122,13 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
       scrap_script_name = extract_domain(scrap_script_url)
       
       if not ssm.exists(scrap_script_name):
-        print(f"There is no script for this url '{scrap_script_url}'")
         return f"There is no script for this url '{scrap_script_url}'"
       
       scrap_script = ssm.get(scrap_script_name)
       scraper = ScrapScriptRunner(scrap_script, input_values)
 
-      result = await scraper.run()
-      print(result)
-      return result
+      return await scraper.run()
     except Exception as e:
-      print(e)
       return f"Error running 'execute_scrap_script'. Error: {str(e)}"
 
   @tool
@@ -150,14 +170,15 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None) 
     except Exception as e:
       return f"Error running 'save_scrap_script'. Error: {str(e)}"
 
-  return [
-    extract_elements, 
-    interact_with_element,
-    page_summary, 
-    navigate,
-    execute_scrap_script,
-    get_scrap_script,
-    save_scrap_script,
-    print_page
-  ]
+  return {
+    Tools.EXTRACT_ELEMENTS: extract_elements, 
+    Tools.INTERACT_WITH_ELEMENT: interact_with_element,
+    Tools.PAGE_SUMMARY: page_summary, 
+    Tools.NAVIGATE: navigate,
+    Tools.GO_BACK: go_back,
+    Tools.PRINT_PAGE: print_page,
+    Tools.EXECUTE_SCRAP_SCRIPT: execute_scrap_script,
+    Tools.GET_SCRAP_SCRIPT: get_scrap_script,
+    Tools.SAVE_SCRAP_SCRIPT: save_scrap_script
+  }
   
