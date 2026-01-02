@@ -144,9 +144,9 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
   @tool
   async def get_scrap_script(scrap_script_url: str) -> dict:
     """
-      Gets a scrap script for the given URL and runs it with the provided input values.
+      Gets a scrap script for the given URL.
       Args:
-        scrap_script_url: The URL of the scrap script to run.
+        scrap_script_url: The URL of the scrap script to retrieve.
       Returns:
         The scrap script if it exists, or an error message.
     """

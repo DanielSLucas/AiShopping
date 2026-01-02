@@ -13,16 +13,17 @@ O script **NÃO** deve parecer específico para o teste atual.
 - **Input Padrão**: No campo `input` do JSON, coloque uma descrição genérica ou um exemplo placeholder, não o valor usado no teste.
   - *Errado*: `"input": {{ "query": "IPTU" }}`
   - *Certo*: `"input": {{ "query": "termo de pesquisa (ex: IPTU)" }}`
+- **Seletores**: use APENAS seletores CSS.
 
 ## 2. Navegação: Modal vs Nova Página (CRÍTICO)
 Você deve identificar como o site se comportou ao abrir um item da lista:
 
-### Cenário A: Modal / Overlay (Caso do TJES)
+### Cenário A: Modal / Overlay
 O item abre uma janela "por cima" da listagem atual. O Scrapper fechou essa janela clicando em um botão "X" ou "Fechar".
 - **Ação**: `click` no botão de fechar.
 - **NÃO use `go_back`**: Fechar o modal já revela a lista novamente. Usar `go_back` aqui quebraria a navegação pois voltaria para a página anterior à busca.
 
-### Cenário B: Redirecionamento / Nova Página (Caso do TJAL/TJDFT)
+### Cenário B: Redirecionamento / Nova Página
 O item carrega uma nova URL ou substitui o conteúdo da janela inteira.
 - **Ação**: Use `{{ "action": "go_back" }}`.
 - **Regra**: Insira tantos `go_back` quantos forem necessários para voltar à lista original.

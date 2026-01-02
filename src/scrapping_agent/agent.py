@@ -2,12 +2,12 @@ import asyncio
 import os
 import time
 from uuid import uuid4
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict, List
 from enum import StrEnum
 
 from scrapping_agent.scrap import ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
-from scrapping_agent.tools import Tools, make_scrapper_tools
+from scrapping_agent.tools import make_scrapper_tools
 from utils.logger import Logger
 from utils.utils import extract_domain, get_prompt
 
@@ -15,15 +15,18 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langgraph.types import Command
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import BaseTool
 
 class State(TypedDict):
   query: str
   all_results: bool
-  messages: Annotated[list, add_messages]
-  actions_history: list[str]
+  messages: Annotated[List[BaseMessage], add_messages]
+  actions_history: List[str]
   tokens: int
   scrap_script: dict
   script_executed: bool
@@ -37,6 +40,19 @@ class Nodes(StrEnum):
   SCRIPT_WRITTER_TOOLS = "script_writter_tools"
   RESPONSE = "response"
   END = END
+
+class Tools(StrEnum):
+  EXTRACT_ELEMENTS = "extract_elements"
+  INTERACT_WITH_ELEMENT = "interact_with_element"
+  PAGE_SUMMARY = "page_summary"
+  GET_URL = "get_url"
+  GO_BACK = "go_back"
+  NAVIGATE = "navigate"
+  PRINT_PAGE = "print_page"  
+  EXECUTE_SCRAP_SCRIPT = "execute_scrap_script"
+  GET_SCRAP_SCRIPT = "get_scrap_script"
+  SAVE_SCRAP_SCRIPT = "save_scrap_script"
+
 
 class ScrappingAgent:
   def __init__(
@@ -79,11 +95,9 @@ class ScrappingAgent:
   async def run(self, query: str, all_results: bool = True, recursion_limit: int = 100):
     start_time = time.time()
 
-    # site_data = await self.scrapper.getSiteData()
     scraping_context = {
       "type": "SITE",
       "content": {
-        # **site_data,
         "url": self.url,
         "id": str(uuid4()),
         "start_time": start_time,
@@ -131,66 +145,101 @@ class ScrappingAgent:
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
 
-    script_executor_tools = [Tools.EXECUTE_SCRAP_SCRIPT]
-    script_executor_node = self.__make_default_node(Nodes.SCRIPT_EXECUTOR, tools=script_executor_tools)
-    script_executor_tools_node = self.__make_tools_node(Nodes.SCRIPT_EXECUTOR_TOOLS, tools=script_executor_tools)
+    executor_tools = [t for t in self.scrapping_tools.values() if t.get_name() in [Tools.EXECUTE_SCRAP_SCRIPT, Tools.GET_SCRAP_SCRIPT]]
+    writter_tools = [self.scrapping_tools[Tools.SAVE_SCRAP_SCRIPT]]
+    scrapper_tools = [t for t in self.scrapping_tools.values() if t.get_name() not in executor_tools + writter_tools]
 
-    scrapper_tools = [Tools.PAGE_SUMMARY, Tools.EXTRACT_ELEMENTS, Tools.INTERACT_WITH_ELEMENT, Tools.NAVIGATE, Tools.GET_URL, Tools.GO_BACK, Tools.PRINT_PAGE]
-    scrapper_node = self.__make_default_node(Nodes.SCRAPPER, tools=scrapper_tools)
-    scrapper_tools_node = self.__make_tools_node(Nodes.SCRAPPER_TOOLS, tools=[])
-    
-    script_writter_tools = [Tools.SAVE_SCRAP_SCRIPT]
-    script_writter_node = self.__make_default_node(Nodes.SCRIPT_WRITTER, tools=script_writter_tools)
-    script_writter_tools_node = self.__make_tools_node(Nodes.SCRIPT_WRITTER_TOOLS, tools=script_writter_tools)
+    graph_builder.add_node(Nodes.SCRIPT_EXECUTOR, self._make_script_executor_node(executor_tools))
+    graph_builder.add_node(Nodes.SCRIPT_EXECUTOR_TOOLS, ToolNode(executor_tools))
+    graph_builder.add_node(Nodes.SCRAPPER, self._make_scrapper_node(scrapper_tools))
+    graph_builder.add_node(Nodes.SCRAPPER_TOOLS, ToolNode(scrapper_tools))
+    graph_builder.add_node(Nodes.SCRIPT_WRITTER, self._make_script_writter_node(writter_tools))
+    graph_builder.add_node(Nodes.SCRIPT_WRITTER_TOOLS, ToolNode(writter_tools))
+    graph_builder.add_node(Nodes.RESPONSE, self._response_node)
 
-    response_node = self.__make_default_node(Nodes.RESPONSE)
-
-    graph_builder.add_node(Nodes.SCRIPT_EXECUTOR, script_executor_node)
-    graph_builder.add_node(Nodes.SCRIPT_EXECUTOR_TOOLS, script_executor_tools_node)
-    graph_builder.add_node(Nodes.SCRAPPER, scrapper_node)
-    graph_builder.add_node(Nodes.SCRAPPER_TOOLS, scrapper_tools_node)
-    graph_builder.add_node(Nodes.SCRIPT_WRITTER, script_writter_node)
-    graph_builder.add_node(Nodes.SCRIPT_WRITTER_TOOLS, script_writter_tools_node)
-    graph_builder.add_node(Nodes.RESPONSE, response_node)
-
-
-    graph_builder.set_entry_point(Nodes.SCRIPT_EXECUTOR)
-    graph_builder.add_conditional_edges(Nodes.SCRIPT_EXECUTOR, self.make_script_executor_conditional_edge()) # [TOOLS, SCRAPPER, RESPONSE]
+    graph_builder.add_edge(START, Nodes.SCRIPT_EXECUTOR)
     graph_builder.add_edge(Nodes.SCRIPT_EXECUTOR_TOOLS, Nodes.SCRIPT_EXECUTOR)
-    graph_builder.add_conditional_edges(Nodes.SCRAPPER, self.make_scrapper_conditional_edge()) # [TOOLS, SCRIPT_WRITTER]
     graph_builder.add_edge(Nodes.SCRAPPER_TOOLS, Nodes.SCRAPPER)
-    graph_builder.add_conditional_edges(Nodes.SCRIPT_WRITTER, self.make_script_writter_conditional_edge()) # [TOOLS, RESPONSE]
     graph_builder.add_edge(Nodes.SCRIPT_WRITTER_TOOLS, Nodes.SCRIPT_WRITTER)
-    graph_builder.add_edge(Nodes.RESPONSE, Nodes.END)
+    graph_builder.add_edge(Nodes.RESPONSE, END)
 
-    memory = MemorySaver()
-    return graph_builder.compile(checkpointer=memory)
+    return graph_builder.compile(checkpointer=MemorySaver())
 
-  def __make_default_node(self, name: Nodes, tools: list[Tools] = []):
-    async def node(state: State):
-      self.current_node = name.upper()
-      prompt = self.__get_prompt_template(name)
-      tools_impl = [v for k, v in self.scrapping_tools.items() if k in tools]
-      llm = self.llm.model_copy()
-      llm = llm if len(tools) == 0 else llm.bind_tools(tools_impl)
+  def _make_script_executor_node(self, tools: List[BaseTool] = []) -> Command:
+    async def executor_node(state: State) -> Command:
+      self.logger.debug(f"{Nodes.SCRIPT_EXECUTOR.upper()} 🤖")
+      prompt = self.__get_prompt_template(Nodes.SCRIPT_EXECUTOR)
+      model = self.llm.bind_tools(tools)
+      script_executed = state.get("script_executed", False)
 
-      message = await (prompt | llm).ainvoke(state)
-      tool_calls = [
-        f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
-        for tc in message.tool_calls
-      ]
+      last_message = state["messages"][-1]
+      if isinstance(last_message, ToolMessage) and last_message.name == Tools.EXECUTE_SCRAP_SCRIPT:
+        script_executed = False if "Error" in last_message.content else True
+        self.logger.debug(f"Script executed with success: {script_executed}")
 
-      state["actions_history"].extend(tool_calls)
-      state["tokens"] += message.usage_metadata.get('total_tokens', 0)
+      response = await (prompt | model).ainvoke(state)
+      tokens = response.usage_metadata.get('total_tokens', 0)
+      
+      if response.tool_calls:
+        self.logger.debug("Executing script")
+        return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
+      
+      target = Nodes.RESPONSE if script_executed else Nodes.SCRAPPER
+      return Command(update={"messages": [response], "script_executed": script_executed, "tokens": state["tokens"] + tokens}, goto=target)
+    return executor_node
+  
 
-      self.logger.debug(f"\n{name.upper()} 🤖")
-      self.logger.debug(f"message: {message.content}")
-      self.logger.debug(f"tool_calls: {tool_calls}")
-      self.logger.debug(f"tokens: {message.usage_metadata['total_tokens']}")
+  def _make_scrapper_node(self, tools: List[BaseTool] = []) -> Command:
+    async def scrapper_node(state: State) -> Command:
+      prompt = self.__get_prompt_template(Nodes.SCRAPPER)
+      model = self.llm.bind_tools(tools)
+      
+      response = await (prompt | model).ainvoke(state)
+      tokens = response.usage_metadata.get('total_tokens', 0)
 
-      return {"messages": [message], "actions_history": state["actions_history"], "tokens": state["tokens"]}
+      self.logger.debug(f"{Nodes.SCRAPPER.upper()} 🤖")
+      self.logger.debug(f"message: {response.content}")
+      self.logger.debug(f"tokens: {response.usage_metadata['total_tokens']}")
 
-    return node
+      if response.tool_calls:  
+        tool_calls = self._get_formatted_tool_calls(response)
+        self.logger.debug(f"tool_calls: {tool_calls}")
+        return Command(
+          update={"messages": [response], "actions_history": state["actions_history"] + tool_calls, "tokens": state["tokens"] + tokens}, 
+          goto=Nodes.SCRAPPER_TOOLS
+        )
+      
+      return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_WRITTER)
+    return scrapper_node
+  
+  def _get_formatted_tool_calls(self, msg: BaseMessage):
+    return [
+      f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
+      for tc in msg.tool_calls
+    ]
+
+  def _make_script_writter_node(self, tools: List[BaseTool] = []) -> Command:
+    async def script_writter_node(state: State) -> Command:
+      self.logger.debug(f"{Nodes.SCRIPT_WRITTER.upper()} 🤖")
+      prompt = self.__get_prompt_template(Nodes.SCRIPT_WRITTER)
+      model = self.llm.bind_tools(tools)
+      
+      response = await (prompt | model).ainvoke(state)
+      tokens = response.usage_metadata.get('total_tokens', 0)
+
+      if response.tool_calls:
+        self.logger.debug("Saving scrap script")
+        return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_WRITTER_TOOLS)
+      
+      return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.RESPONSE)
+    return script_writter_node
+
+  async def _response_node(self, state: State):
+    self.logger.debug(f"{Nodes.RESPONSE.upper()} 🤖")
+    prompt = self.__get_prompt_template(Nodes.RESPONSE)
+    response = await (prompt | self.llm).ainvoke(state)
+    tokens = response.usage_metadata.get('total_tokens', 0)
+    return {"messages": [response], "tokens": state["tokens"] + tokens }
 
   def __get_prompt_template(self, role) -> ChatPromptTemplate:
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", f"{role}.md")
@@ -198,63 +247,4 @@ class ScrappingAgent:
       ("system", get_prompt(prompt_path)),
       MessagesPlaceholder("messages")
     ])
-  
-  def __make_tools_node(self, name: Nodes, tools: list[Tools]):
-    async def tools_node(state: State):
-      self.current_node = name.upper()
-      tool_msgs = await asyncio.gather(*[
-        self.__handle_tool_call(tool_call, state) 
-        for tool_call in state["messages"][-1].tool_calls
-      ])
 
-      # execute_script_tool_msg = {
-      #   msg["tool_name"]:msg 
-      #   for msg in tool_msgs 
-      #   if msg["tool_name"] == Tools.EXECUTE_SCRAP_SCRIPT
-      # }
-
-      # if len(execute_script_tool_msg) > 0:
-      #   execute_script_tool_msg = execute_script_tool_msg[0]
-      #   script_executed = False if "Error" in execute_script_tool_msg["content"] else True
-
-      # self.logger.debug(f"\nTOOLS 🛠️ -> {tool_msgs}")  
-      return {"messages": tool_msgs, "script_executed": state["script_executed"]}
-    
-    return tools_node
-  
-  async def __handle_tool_call(self, tool_call, state: State):
-    tool_call_id, tool_name, tool_args = tool_call["id"], tool_call["name"], tool_call["args"]
-    
-    tool = self.scrapping_tools[tool_name]
-    result = await tool.ainvoke(tool_args)
-
-    if tool_name == Tools.EXECUTE_SCRAP_SCRIPT:
-      state["script_executed"] = False if "Error" in result else True
-
-    return ToolMessage(content=result, tool_call_id=tool_call_id, tool_name=tool_name)
-  
-  def make_script_executor_conditional_edge(self):
-    def conditional_edge(state: State) -> Literal[Nodes.SCRIPT_EXECUTOR_TOOLS, Nodes.SCRAPPER, Nodes.RESPONSE]:
-      if self.__has_tool_calls(state["messages"][-1]):
-        return Nodes.SCRIPT_EXECUTOR_TOOLS
-      if state["script_executed"]:
-        return Nodes.RESPONSE
-
-      return Nodes.SCRAPPER
-    
-    return conditional_edge
-
-  def make_scrapper_conditional_edge(self):
-    def conditional_edge(state: State) -> Literal[Nodes.SCRAPPER_TOOLS, Nodes.SCRIPT_WRITTER]:
-      return Nodes.SCRAPPER_TOOLS if self.__has_tool_calls(state["messages"][-1]) else Nodes.SCRIPT_WRITTER
-    
-    return conditional_edge
-  
-  def make_script_writter_conditional_edge(self):
-    def conditional_edge(state: State) -> Literal[Nodes.SCRIPT_WRITTER_TOOLS, Nodes.RESPONSE]:
-      return Nodes.SCRIPT_WRITTER_TOOLS if self.__has_tool_calls(state["messages"][-1]) else Nodes.RESPONSE
-    
-    return conditional_edge
-
-  def __has_tool_calls(self, message):
-    return hasattr(message, "tool_calls") and len(message.tool_calls) > 0
