@@ -28,6 +28,8 @@ class State(TypedDict):
   messages: Annotated[List[BaseMessage], add_messages]
   actions_history: List[str]
   tokens: int
+  input_tokens: int
+  output_tokens: int
   scrap_script: dict
   script_executed: bool
 
@@ -122,6 +124,8 @@ class ScrappingAgent:
       messages=[HumanMessage(initial_message)],
       actions_history=[],
       tokens=0,
+      input_tokens=0,
+      output_tokens=0,
       scrap_script=scrap_script,
       script_executed=False
     )
@@ -132,14 +136,17 @@ class ScrappingAgent:
 
     result = await self.graph.ainvoke(initial_state, config)
 
-    ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
-    total_tokens = sum(msg.usage_metadata.get("total_tokens", 0) for msg in ai_messages)
-    self.logger.debug(f"Total tokens: {total_tokens}")
+    self.logger.debug(f"Input tokens: {result.get('input_tokens', 0)}")
+    self.logger.debug(f"Output tokens: {result.get('output_tokens', 0)}")
+    self.logger.info(f"Total tokens: {result.get('tokens', 0)}")
 
     scraping_context["content"]["end_time"] = time.time()
     self.logger.info(scraping_context)
 
-    return { "type": "RESPONSE", "content": result["messages"][-1].content }
+    response = { "type": "RESPONSE", "content": result["messages"][-1].content }
+    self.logger.info(response)
+
+    return response
 
 
   def _build_graph(self) -> StateGraph:
@@ -165,27 +172,73 @@ class ScrappingAgent:
 
     return graph_builder.compile(checkpointer=MemorySaver())
 
+  def _save_tokens(self, state: State, response: AIMessage) -> dict:
+    usage = response.usage_metadata
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    total_tokens = usage.get("total_tokens", 0)
+    
+    return {
+      "tokens": state["tokens"] + total_tokens,
+      "input_tokens": state["input_tokens"] + input_tokens,
+      "output_tokens": state["output_tokens"] + output_tokens
+    }
+
+  def _trim_history(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+    """
+    Trims tool responses that are too large or from old get_dom_tree calls to save tokens.
+    """
+    trimmed = []
+    # Identify ToolMessages that are long and might be from get_dom_tree
+    # We keep the most recent ones but can truncate older long ones
+    for i, msg in enumerate(messages):
+      if isinstance(msg, ToolMessage) and len(str(msg.content)) > 2000:
+        # Check if it's the last tool message of this type, if so keep it, else truncate
+        is_last_of_type = True
+        for next_msg in messages[i+1:]:
+           if isinstance(next_msg, ToolMessage) and next_msg.name == msg.name:
+              is_last_of_type = False
+              break
+        
+        if not is_last_of_type:
+           # Truncate older results
+           trimmed.append(ToolMessage(
+              content=str(msg.content)[:500] + "... [TRUNCATED TO SAVE TOKENS]",
+              tool_call_id=msg.tool_call_id,
+              name=msg.name
+           ))
+           continue
+      
+      trimmed.append(msg)
+    return trimmed
+
   def _make_script_executor_node(self, tools: List[BaseTool] = []) -> Command:
     async def executor_node(state: State) -> Command:
       self.logger.debug(f"{Nodes.SCRIPT_EXECUTOR.upper()} 🤖")
       prompt = self.__get_prompt_template(Nodes.SCRIPT_EXECUTOR)
       model = self.llm.bind_tools(tools)
+      
       script_executed = state.get("script_executed", False)
-
       last_message = state["messages"][-1]
       if isinstance(last_message, ToolMessage) and last_message.name == Tools.EXECUTE_SCRAP_SCRIPT:
         script_executed = False if "Error" in last_message.content else True
         self.logger.debug(f"Script executed with success: {script_executed}")
 
-      response = await (prompt | model).ainvoke(state)
-      tokens = response.usage_metadata.get('total_tokens', 0)
+      # Trim history before calling LLM
+      trimmed_state = state.copy()
+      trimmed_state["messages"] = self._trim_history(state["messages"])
+
+      response = await (prompt | model).ainvoke(trimmed_state)
+      token_updates = self._save_tokens(state, response)
       
       if response.tool_calls:
         self.logger.debug("Executing script")
-        return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
+        return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
       
+      self.logger.debug(f"Script executed: {script_executed}")
       target = Nodes.RESPONSE if script_executed else Nodes.SCRAPPER
-      return Command(update={"messages": [response], "script_executed": script_executed, "tokens": state["tokens"] + tokens}, goto=target)
+      self.logger.debug(f"Moving to: {target}")
+      return Command(update={"messages": [response], "script_executed": script_executed, **token_updates}, goto=target)
     return executor_node
   
 
@@ -194,22 +247,30 @@ class ScrappingAgent:
       prompt = self.__get_prompt_template(Nodes.SCRAPPER)
       model = self.llm.bind_tools(tools)
       
-      response = await (prompt | model).ainvoke(state)
-      tokens = response.usage_metadata.get('total_tokens', 0)
+      last_message = state["messages"][-1]
+      if isinstance(last_message, ToolMessage):
+        self.logger.debug(f"Tool message: {last_message}")
+      
+      # Trim history before calling LLM
+      trimmed_state = state.copy()
+      trimmed_state["messages"] = self._trim_history(state["messages"])
+
+      response = await (prompt | model).ainvoke(trimmed_state)
+      token_updates = self._save_tokens(state, response)
 
       self.logger.debug(f"{Nodes.SCRAPPER.upper()} 🤖")
       self.logger.debug(f"message: {response.content}")
-      self.logger.debug(f"tokens: {response.usage_metadata['total_tokens']}")
+      self.logger.debug(f"tokens: {response.usage_metadata}")
 
       if response.tool_calls:  
         tool_calls = self._get_formatted_tool_calls(response)
         self.logger.debug(f"tool_calls: {tool_calls}")
         return Command(
-          update={"messages": [response], "actions_history": state["actions_history"] + tool_calls, "tokens": state["tokens"] + tokens}, 
+          update={"messages": [response], "actions_history": state["actions_history"] + tool_calls, **token_updates}, 
           goto=Nodes.SCRAPPER_TOOLS
         )
       
-      return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_WRITTER)
+      return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_WRITTER)
     return scrapper_node
   
   def _get_formatted_tool_calls(self, msg: BaseMessage):
@@ -224,22 +285,27 @@ class ScrappingAgent:
       prompt = self.__get_prompt_template(Nodes.SCRIPT_WRITTER)
       model = self.llm.bind_tools(tools)
       
-      response = await (prompt | model).ainvoke(state)
-      tokens = response.usage_metadata.get('total_tokens', 0)
+      # Trim history before calling LLM
+      trimmed_state = state.copy()
+      trimmed_state["messages"] = self._trim_history(state["messages"])
+
+      response = await (prompt | model).ainvoke(trimmed_state)
+      token_updates = self._save_tokens(state, response)
 
       if response.tool_calls:
         self.logger.debug("Saving scrap script")
-        return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.SCRIPT_WRITTER_TOOLS)
+        return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_WRITTER_TOOLS)
       
-      return Command(update={"messages": [response], "tokens": state["tokens"] + tokens}, goto=Nodes.RESPONSE)
+      self.logger.debug("Moving to: RESPONSE")
+      return Command(update={"messages": [response], **token_updates}, goto=Nodes.RESPONSE)
     return script_writter_node
 
   async def _response_node(self, state: State):
     self.logger.debug(f"{Nodes.RESPONSE.upper()} 🤖")
     prompt = self.__get_prompt_template(Nodes.RESPONSE)
     response = await (prompt | self.llm).ainvoke(state)
-    tokens = response.usage_metadata.get('total_tokens', 0)
-    return {"messages": [response], "tokens": state["tokens"] + tokens }
+    token_updates = self._save_tokens(state, response)
+    return {"messages": [response], **token_updates }
 
   def __get_prompt_template(self, role) -> ChatPromptTemplate:
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", f"{role}.md")

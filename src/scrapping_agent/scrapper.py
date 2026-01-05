@@ -14,7 +14,7 @@ class Scrapper:
     self.__url = None
     self.__initialized = False
   
-  async def initialize(self, url: str, headless: bool = True) -> None:
+  async def initialize(self, url: str, headless: bool = True) -> str:
     self.__playwright = await async_playwright().start()
     self.__browser = await self.__playwright.chromium.launch(headless=headless)
     self.__page = await self.__browser.new_page()
@@ -23,8 +23,8 @@ class Scrapper:
     self.__page.on("popup", self.__handle_popup())
     self.__page.on("load", lambda p: p.wait_for_load_state())
 
-    await self.navigate(url)
     self.__initialized = True
+    return await self.navigate(url)
 
   def __handle_popup(self):
     async def handle(page: Page):
@@ -117,7 +117,7 @@ class Scrapper:
     if class_name:
       element['Classes'] = class_name
     
-    text = re.sub(r'\s+', ' ', (await el.text_content()).strip())
+    text = re.sub(r'[\s\t\n]+', ' ', (await el.text_content()).strip())
     if text:
       formatted_text = text if not trunc else text[:50] + "..." if len(text) > 50 else text
       element['Text'] = formatted_text
@@ -226,6 +226,91 @@ class Scrapper:
         + f"Interaction elements: \n{interaction_elements}"
     except Exception as e:
       return f"Error running 'page_summary'. Error: {str(e)}"
+    
+  async def get_dom_tree(self, selector: str = "body", limit: int = 50):
+    """
+      Returns a simplified DOM tree of the page, focusing on structural and interactive elements.
+      Args:
+        selector (str): The selector to start the tree from.
+        limit (int): The maximum number of items to capture to avoid huge outputs.
+      Returns:
+        str: A JSON-like string representation of the DOM tree.
+    """
+    try:
+      js_script = """
+      (args) => {
+        const [rootSelector, limit] = args;
+        const root = document.querySelector(rootSelector);
+        if (!root) return "Element not found";
+
+        const importantTags = new Set(['H1','H2','H3','H4','H5','H6','P','A','BUTTON','INPUT','UL','OL','LI','TABLE','THEAD','TBODY','TR','TH','TD','FORM', 'IMG', 'DIV', 'SPAN']);
+        
+        let counter = 0;
+        
+        function traverse(node, depth) {
+          if (counter >= limit) return null;
+          if (depth > 20) return "..."; 
+          
+          if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent.replace(/[\\s\\t\\n]+/g, ' ').trim();
+            if (text.length > 0) return text;
+            return null;
+          }
+          
+          if (node.nodeType !== Node.ELEMENT_NODE) return null;
+          
+          const style = window.getComputedStyle(node);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return null;
+
+          const tagName = node.tagName;
+          const id = node.id ? '#' + node.id : '';
+          let className = "";
+          if (node.classList && node.classList.length > 0) {
+             className = '.' + [...node.classList].join('.');
+          }
+          const fullSelector = (tagName + id + className).toLowerCase();
+          
+          let children = [];
+          for (let child of node.childNodes) {
+             const childResult = traverse(child, depth + 1);
+             if (childResult) children.push(childResult);
+          }
+          
+          // Filter 'unimportant' containers that just wrap a single child or no meaningful attributes
+          if (!importantTags.has(tagName) && id === '' && className === '' && children.length <= 1) {
+             return children.length === 1 ? children[0] : null;
+          }
+
+          if (children.length === 0 && !importantTags.has(tagName)) return null;
+          
+          // Collapse if children are just text
+          if (children.length > 0 && children.every(c => typeof c === 'string')) {
+             const joined = children.join(' ').trim();
+             if (joined.length === 0) return null;
+             if (!importantTags.has(tagName) && id === '' && className === '') return joined;
+             // Keep the tag if it has attributes
+          }
+
+          counter++;
+          
+          let output = fullSelector;
+          if (tagName === 'A') output += ` [href="${node.getAttribute('href')}"]`;
+          if (tagName === 'INPUT') output += ` [name="${node.getAttribute('name')}"][placeholder="${node.getAttribute('placeholder')}"]`;
+          if (tagName === 'IMG') output += ` [alt="${node.getAttribute('alt')}"]`;
+          
+          if (children.length > 0) {
+             return { [output]: children };
+          } else {
+             return output;
+          }
+        }
+
+        return JSON.stringify(traverse(root, 0));
+      }
+      """
+      return await self.__get_page().evaluate(js_script, [selector, limit])
+    except Exception as e:
+      return f"Error running 'get_dom_tree'. Error: {str(e)}"
     
   async def navigate(self, url: str):
     """

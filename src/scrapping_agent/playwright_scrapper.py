@@ -1,4 +1,5 @@
 import os
+import re
 from urllib.parse import urlparse
 from asyncio import sleep
 from typing import Dict, List, NotRequired, TypedDict
@@ -81,13 +82,17 @@ class PlaywrightScrapper:
     await self.page.wait_for_selector(selector, timeout=(timeout or self.timeout))
 
   async def extract(self, selector: str, prop_label_dict: Dict[str, str], options: PlaywrightScrapperActionOptions = {}) -> Dict[str, str]:
-    el = await self.__get_element(selector, options=options)
-    result = {}
-    for prop, label in prop_label_dict.items():
-      prop_value = await el.evaluate(f"el => el.{prop}")
-      prop_value = prop_value.replace(r"\s+", " ").strip() if prop_value else "None"
-      result[label] = prop_value
-    return result
+    try:
+      el = await self.__get_element(selector, options=options)
+      result = {}
+      for prop, label in prop_label_dict.items():
+        prop_value = await el.evaluate(f"el => el.{prop}")
+        prop_value = re.sub(r"[\s\t\n]+", " ", prop_value).strip() if prop_value else "None"
+        result[label] = prop_value
+      return result
+    except Exception as e:
+      self.logger.debug(f"Element not found for extraction: {selector}. Returning None labels.")
+      return {label: "None" for label in prop_label_dict.values()}
 
   async def __get_element(self, selector: str, all=False, options: PlaywrightScrapperActionOptions = {}) -> ElementHandle | List[ElementHandle]:
     elements = await self.page.query_selector_all(options.get("parent_selector") if options.get("parent_selector") else selector)
@@ -99,7 +104,7 @@ class PlaywrightScrapper:
       raise Exception(f"No elements with selector '{selector}' were found")
 
     if (self.debug):
-      await self.__highlight(elements, 2000)
+      await self.__highlight(elements, 1000)
 
     el = elements if all else elements[0]
 

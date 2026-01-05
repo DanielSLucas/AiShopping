@@ -80,8 +80,10 @@ class ScrapScriptRunner:
     elif isinstance(obj, str):
       for var_name, var_value in self.input_values.items():
         placeholder = f"{{{{{var_name}}}}}"
+        if placeholder == obj:
+          return var_value
         if placeholder in obj:
-          obj = obj.replace(placeholder, var_value)
+          obj = obj.replace(placeholder, str(var_value))
     return obj
   
   async def execute_step(self, scrapper: PlaywrightScrapper, step: Dict[str, Any]) -> Dict | bool:

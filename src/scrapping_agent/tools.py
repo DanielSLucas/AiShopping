@@ -13,6 +13,7 @@ class Tools(StrEnum):
   EXTRACT_ELEMENTS = "extract_elements"
   INTERACT_WITH_ELEMENT = "interact_with_element"
   PAGE_SUMMARY = "page_summary"
+  GET_DOM_TREE = "get_dom_tree"
   GET_URL = "get_url"
   GO_BACK = "go_back"
   NAVIGATE = "navigate"
@@ -180,10 +181,23 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     except Exception as e:
       return f"Error running 'save_scrap_script'. Error: {str(e)}"
 
+  @tool
+  async def get_dom_tree(selector: str = "body", limit: int = 50) -> str:
+    """
+    Returns a simplified DOM tree of the page, focusing on structural and interactive elements.
+    Args:
+        selector: The selector to start the tree from.
+        limit: The maximum number of items to capture to avoid huge outputs.
+    Returns:
+        A JSON-like string representation of the DOM tree.
+    """
+    return await scrapper.get_dom_tree(selector, limit)
+
   return {
     Tools.EXTRACT_ELEMENTS: extract_elements, 
     Tools.INTERACT_WITH_ELEMENT: interact_with_element,
-    Tools.PAGE_SUMMARY: page_summary, 
+    Tools.PAGE_SUMMARY: page_summary,
+    Tools.GET_DOM_TREE: get_dom_tree, 
     Tools.NAVIGATE: navigate,
     Tools.GET_URL: get_url,
     Tools.GO_BACK: go_back,
