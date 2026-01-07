@@ -23,38 +23,44 @@ class ScrapScriptsManager:
   
   def save(self, script_name: str, script: dict) -> None:
     with open(os.path.join(self.SCRAP_SCRIPTS_DIR, f"{script_name}.json"), "w") as f:
-      json.dump(script, f, indent=2) 
+      json.dump(script, f, indent=2, ensure_ascii=False) 
 
 class ScrapScriptRunner:
-  def __init__(self, scrap_script: Dict[str, Any], input_values: Dict[str, str | int], debug: bool = False):
+  def __init__(self, scrap_script: Dict[str, Any], input_values: Dict[str, str | int], debug: bool = False, logger: Logger = None):
     self.input_values = input_values
-    self.extracted_data: List[str] = []
     self.scrap_script: Dict[str, Any] = scrap_script
     
     log_name = extract_domain(scrap_script["site"])
-    self.logger = Logger(file_name=f"scrap_{log_name}", show_debug_logs=debug)
+    self.logger = Logger(file_name=f"scrap_{log_name}", show_debug_logs=debug) if not logger else logger
     self.debug = debug
 
     self.actions = ScrapScriptsStepActions(self.execute_step)
+    self.errors = []
 
   async def run(self) -> str:
     self.validate_inputs()
     self.scrap_script = self.replace_placeholders(self.scrap_script)
 
     scrapper = PlaywrightScrapper()
+    extracted_data: List[str] = []
 
     self.logger.debug(f"Accessing '{self.scrap_script['site']}'")
     await scrapper.initialize(self.scrap_script["site"], self.debug)
 
     for step in self.scrap_script['steps']:
       result = await self.execute_step(scrapper, step)
+      if result is False:
+        break
       if (isinstance(result, dict)):
-        self.extracted_data.append(result)
+        extracted_data.append(result)
     self.logger.debug("Steps finished")
 
     await scrapper.close()
 
-    return json.dumps(self.extracted_data, ensure_ascii=False)
+    if self.errors:
+      return json.dumps({"errors": self.errors}, ensure_ascii=False)
+
+    return json.dumps(extracted_data, ensure_ascii=False)
 
 
   def validate_inputs(self) -> None:
@@ -68,7 +74,7 @@ class ScrapScriptRunner:
         required_inputs = '\n- '.join([f"{k}: {v}" for k, v in self.scrap_script['input'].items()])
         self.logger.info(f"Error: Missing required input variables: {', '.join(missing_inputs)}")
         self.logger.info(f"Required inputs: \n- {required_inputs}")
-        raise ValueError
+        raise ValueError(f"Missing required input variables: {', '.join(missing_inputs)}")
 
   def replace_placeholders(self, obj: Any) -> Any:
     if isinstance(obj, dict):
@@ -89,6 +95,7 @@ class ScrapScriptRunner:
   async def execute_step(self, scrapper: PlaywrightScrapper, step: Dict[str, Any]) -> Dict | bool:
     action_name = step["action"]
     action = self.actions.get_action(action_name)
+    stop_on_error = step.get("stopOnError", True)
 
     self.logger.info(f"Running {action_name}")
     self.logger.debug(f"Step {step}")
@@ -100,8 +107,14 @@ class ScrapScriptRunner:
 
       return result if result is not None else True
     except Exception as e:
-      self.logger.debug(f"Error running '{action_name}'. {type(e).__name__}: {str(e)}")
-      return not step.get("stopOnError", True)
+      error_msg = f"Error running '{action_name}'. {type(e).__name__}: {str(e)}"
+      self.logger.debug(error_msg)
+      
+      if stop_on_error:
+        self.errors.append(error_msg)
+        return False
+        
+      return True
   
 
 class ScrapScriptsStepActions:
@@ -148,7 +161,7 @@ class ScrapScriptsStepActions:
     result = { step_label: [] }
 
     steps = step.get("steps", [])
-    count = 0;
+    count = 0
 
     while True:
       count += 1
@@ -162,7 +175,7 @@ class ScrapScriptsStepActions:
         
         if (not inner_step.get("ignoreParent", False)):
           enriched_step["parentSelector"] = step["selector"]
-          enriched_step["parentIndex"] = count
+          enriched_step["parentIndex"] = count-1
 
         inner_step_result = await self.execute_step(scrapper, enriched_step)
 

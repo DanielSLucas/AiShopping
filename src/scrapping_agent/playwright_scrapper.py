@@ -67,7 +67,7 @@ class PlaywrightScrapper:
     el: ElementHandle = await self.__get_element(selector, options=options)
     await el.fill(input_text)
   
-  async def click(self, selector: str, is_download=False, options: PlaywrightScrapperActionOptions = {}) -> None:
+  async def click(self, selector: str, is_download: bool = False, options: PlaywrightScrapperActionOptions = {}) -> None:
     el = await self.__get_element(selector, options=options)
     download_event = self.page.wait_for_event("download") if is_download else None
 
@@ -91,7 +91,6 @@ class PlaywrightScrapper:
         result[label] = prop_value
       return result
     except Exception as e:
-      self.logger.debug(f"Element not found for extraction: {selector}. Returning None labels.")
       return {label: "None" for label in prop_label_dict.values()}
 
   async def __get_element(self, selector: str, all=False, options: PlaywrightScrapperActionOptions = {}) -> ElementHandle | List[ElementHandle]:

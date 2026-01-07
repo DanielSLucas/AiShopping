@@ -1,4 +1,5 @@
 import asyncio
+from typing import Dict, Any
 
 from langchain_core.tools import tool
 
@@ -45,7 +46,7 @@ def make_researcher_tools(logger: Logger) -> list:
     return "---\n".join(link_n_data)
   
   @tool
-  async def save_relevant_data(data: dict) -> str:
+  async def save_relevant_data(data: Dict[str, Any]) -> str:
     """
     Save relevant information from your research for the analyst use later.
     Args:

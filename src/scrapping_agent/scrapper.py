@@ -151,7 +151,7 @@ class Scrapper:
     last_element['count'] = 1
     return False
 
-  async def interact_with_element(self, el_selector: str, interaction: str, text: str, is_download=False):
+  async def interact_with_element(self, el_selector: str, interaction: str, text: str, is_download: bool = False):
     """
       Interacts with an element on the page based on the provided selector.
       Args:

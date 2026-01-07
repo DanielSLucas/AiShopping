@@ -13,7 +13,7 @@ from langgraph.types import interrupt, Command
 
 from shopping_agent.tools import make_researcher_tools
 from utils.logger import Logger
-from utils.utils import get_prompt
+from utils.utils import get_prompt, node, get_text_content, save_tokens
 import asyncio
 from datetime import datetime
 
@@ -22,6 +22,9 @@ class State(TypedDict):
   product: str
   specifications: str
   research: list[dict]
+  tokens: int
+  input_tokens: int
+  output_tokens: int
 
 class ShoppingAgent:
   def __init__(
@@ -49,6 +52,9 @@ class ShoppingAgent:
       product=product_query,
       specifications=specifications,
       research=[],
+      tokens=0,
+      input_tokens=0,
+      output_tokens=0
     )
     
     if not self.graph_config:
@@ -66,10 +72,10 @@ class ShoppingAgent:
         last_message = event["messages"][-1]
 
     if self.current_node == "ASK_HUMAN" and not specifications:
-      question = last_message.content
+      question = get_text_content(last_message)
       return { "type": "ASK_HUMAN", "content": question }
     
-    return { "type": "RESPONSE", "content": last_message.content }
+    return { "type": "RESPONSE", "content": get_text_content(last_message) }
 
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
@@ -99,16 +105,19 @@ class ShoppingAgent:
     return graph_builder.compile()
 
   def make_default_node(self, name: str, tools: list = []):
-    async def node(state: State):
-      self.current_node = name.upper()
-      prompt = self._get_prompt_template(name)
-      llm = self.llm.model_copy()
-      llm = llm if len(tools) == 0 else llm.bind_tools(tools)
-      message = await (prompt | llm).ainvoke(state["messages"])
-      self.logger.info({"type": "AGENT", "content": message.content})
-      return {"messages": [message]}
+    @node(name)
+    def node_factory(self):
+      async def node_func(state: State):
+        self.current_node = name.upper()
+        prompt = self._get_prompt_template(name)
+        llm = self.llm.model_copy()
+        llm = llm if len(tools) == 0 else llm.bind_tools(tools)
+        message = await (prompt | llm).ainvoke(state["messages"])
+        return Command(update={"messages": [message]})
+      
+      return node_func
     
-    return node
+    return node_factory(self)
   
   def _get_prompt_template(self, role) -> ChatPromptTemplate:
     """Return the prompt template for the receptionist role."""
@@ -131,23 +140,26 @@ class ShoppingAgent:
     return ask_human_node
   
   def make_analyst_node(self):
-    async def node(state: State):
-      self.current_node = "ANALYST"
-      prompt = self._get_prompt_template("analyst")
-      llm = self.llm.model_copy()
+    @node("analyst")
+    def node_factory(self):
+      async def node_func(state: State):
+        self.current_node = "ANALYST"
+        prompt = self._get_prompt_template("analyst")
+        llm = self.llm.model_copy()
 
-      product = state["product"]
-      specifications = state["specifications"]
-      research = "\n\n".join([json.dumps(product, ensure_ascii=False) for product in state["research"]])
+        product = state["product"]
+        specifications = state["specifications"]
+        research = "\n\n".join([json.dumps(product, ensure_ascii=False) for product in state["research"]])
 
-      analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
-      self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
+        analyst_input = f"# Produto\n{product}\n# Especificações:\n{specifications}\n# Pequisa:\n{research}"
+        self.logger.debug(f"\nANALYST_INPUT -> {analyst_input}")
 
-      message = await (prompt | llm).ainvoke({"messages":[HumanMessage(analyst_input)]})
-      self.logger.info({"type": "AGENT", "content": message.content})
-      return {"messages": [message]}
+        message = await (prompt | llm).ainvoke({"messages":[HumanMessage(analyst_input)]})
+        return Command(update={"messages": [message]})
+      
+      return node_func
     
-    return node
+    return node_factory(self)
 
   def make_tools_node(self):
     async def tools_node(state: State):

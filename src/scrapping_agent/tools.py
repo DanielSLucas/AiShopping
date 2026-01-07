@@ -6,8 +6,8 @@ from scrapping_agent.scrap import ScrapScriptsManager, ScrapScriptRunner
 from scrapping_agent.scrapper import Scrapper
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import tool, BaseTool
-
 from utils.utils import describe_web_page_print, extract_domain
+from utils.logger import Logger 
 
 class Tools(StrEnum):
   EXTRACT_ELEMENTS = "extract_elements"
@@ -22,7 +22,7 @@ class Tools(StrEnum):
   GET_SCRAP_SCRIPT = "get_scrap_script"
   SAVE_SCRAP_SCRIPT = "save_scrap_script"
 
-def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, headless: bool = True) -> dict[Tools, BaseTool]:
+def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, headless: bool = True, logger: Logger = None) -> dict[Tools, BaseTool]:
   """
   Create and return the scrapping tools.
   Args:
@@ -47,7 +47,7 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     return await scrapper.extract_elements(el_selector, trunc, limit, compact)
 
   @tool
-  async def interact_with_element(el_selector: str, interaction: str, text: str = "", is_download=False) -> str:
+  async def interact_with_element(el_selector: str, interaction: str, text: str = "", is_download: bool = False) -> str:
     """
     Interacts with an element on the page based on the provided selector.
     Args:
@@ -136,7 +136,7 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
         return f"There is no script for this url '{scrap_script_url}'"
       
       scrap_script = ssm.get(scrap_script_name)
-      scraper = ScrapScriptRunner(scrap_script, input_values)
+      scraper = ScrapScriptRunner(scrap_script, input_values, debug=not headless, logger=logger)
 
       return await scraper.run()
     except Exception as e:

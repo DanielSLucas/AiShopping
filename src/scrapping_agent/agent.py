@@ -1,5 +1,6 @@
 import asyncio
 import os
+import json
 import time
 from uuid import uuid4
 from typing import Annotated, Literal, TypedDict, List
@@ -7,9 +8,9 @@ from enum import StrEnum
 
 from scrapping_agent.scrap import ScrapScriptsManager
 from scrapping_agent.scrapper import Scrapper
-from scrapping_agent.tools import make_scrapper_tools
+from scrapping_agent.tools import make_scrapper_tools, Tools
 from utils.logger import Logger
-from utils.utils import extract_domain, get_prompt
+from utils.utils import extract_domain, get_prompt, node, get_text_content
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -32,6 +33,7 @@ class State(TypedDict):
   output_tokens: int
   scrap_script: dict
   script_executed: bool
+  retry_count: int
 
 class Nodes(StrEnum):
   SCRIPT_EXECUTOR = "script_executor"
@@ -43,18 +45,6 @@ class Nodes(StrEnum):
   RESPONSE = "response"
   END = END
 
-class Tools(StrEnum):
-  EXTRACT_ELEMENTS = "extract_elements"
-  INTERACT_WITH_ELEMENT = "interact_with_element"
-  PAGE_SUMMARY = "page_summary"
-  GET_URL = "get_url"
-  GO_BACK = "go_back"
-  NAVIGATE = "navigate"
-  PRINT_PAGE = "print_page"  
-  EXECUTE_SCRAP_SCRIPT = "execute_scrap_script"
-  GET_SCRAP_SCRIPT = "get_scrap_script"
-  SAVE_SCRAP_SCRIPT = "save_scrap_script"
-
 
 class ScrappingAgent:
   def __init__(
@@ -62,10 +52,12 @@ class ScrappingAgent:
     llm: BaseChatModel,
     debug: bool = True,
     vision_model = ChatOpenAI(model="gpt-4o"),
-    logger: Logger = None
+    logger: Logger = None,
+    max_retries: int = 2
   ):
     self.debug = debug
     self.logger = logger
+    self.max_retries = max_retries
 
     self.scrapper = Scrapper()
     self.llm = llm
@@ -87,7 +79,8 @@ class ScrappingAgent:
     self.scrapping_tools = make_scrapper_tools(
       self.scrapper,
       vision_model=self.vision_model,
-      headless=headless
+      headless=headless,
+      logger=self.logger
     )
 
   async def close(self):
@@ -116,7 +109,7 @@ class ScrappingAgent:
     scrap_script_exists = ssm.exists(extract_domain(self.url))
     scrap_script = ssm.get(extract_domain(self.url)) if scrap_script_exists else "None"
 
-    initial_message = f"Site: {self.url}\nQuery: {query}\nScrap Script:\n{scrap_script}"
+    initial_message = f"Busque: {query}\nNo Site: {self.url}"
       
     initial_state = State(
       query=query,
@@ -127,7 +120,8 @@ class ScrappingAgent:
       input_tokens=0,
       output_tokens=0,
       scrap_script=scrap_script,
-      script_executed=False
+      script_executed=False,
+      retry_count=0
     )
 
     config = {"configurable": {"thread_id": "1"}, "recursion_limit": recursion_limit}
@@ -143,7 +137,7 @@ class ScrappingAgent:
     scraping_context["content"]["end_time"] = time.time()
     self.logger.info(scraping_context)
 
-    response = { "type": "RESPONSE", "content": result["messages"][-1].content }
+    response = { "type": "RESPONSE", "content": get_text_content(result["messages"][-1]) }
     self.logger.info(response)
 
     return response
@@ -154,7 +148,7 @@ class ScrappingAgent:
 
     executor_tools = [t for t in self.scrapping_tools.values() if t.get_name() in [Tools.EXECUTE_SCRAP_SCRIPT, Tools.GET_SCRAP_SCRIPT]]
     writter_tools = [self.scrapping_tools[Tools.SAVE_SCRAP_SCRIPT]]
-    scrapper_tools = [t for t in self.scrapping_tools.values() if t.get_name() not in executor_tools + writter_tools]
+    scrapper_tools = [t for t in self.scrapping_tools.values() if t not in executor_tools + writter_tools]
 
     graph_builder.add_node(Nodes.SCRIPT_EXECUTOR, self._make_script_executor_node(executor_tools))
     graph_builder.add_node(Nodes.SCRIPT_EXECUTOR_TOOLS, ToolNode(executor_tools))
@@ -162,7 +156,7 @@ class ScrappingAgent:
     graph_builder.add_node(Nodes.SCRAPPER_TOOLS, ToolNode(scrapper_tools))
     graph_builder.add_node(Nodes.SCRIPT_WRITTER, self._make_script_writter_node(writter_tools))
     graph_builder.add_node(Nodes.SCRIPT_WRITTER_TOOLS, ToolNode(writter_tools))
-    graph_builder.add_node(Nodes.RESPONSE, self._response_node)
+    graph_builder.add_node(Nodes.RESPONSE, self._make_response_node())
 
     graph_builder.add_edge(START, Nodes.SCRIPT_EXECUTOR)
     graph_builder.add_edge(Nodes.SCRIPT_EXECUTOR_TOOLS, Nodes.SCRIPT_EXECUTOR)
@@ -172,140 +166,106 @@ class ScrappingAgent:
 
     return graph_builder.compile(checkpointer=MemorySaver())
 
-  def _save_tokens(self, state: State, response: AIMessage) -> dict:
-    usage = response.usage_metadata
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    total_tokens = usage.get("total_tokens", 0)
-    
-    return {
-      "tokens": state["tokens"] + total_tokens,
-      "input_tokens": state["input_tokens"] + input_tokens,
-      "output_tokens": state["output_tokens"] + output_tokens
-    }
-
-  def _trim_history(self, messages: List[BaseMessage]) -> List[BaseMessage]:
-    """
-    Trims tool responses that are too large or from old get_dom_tree calls to save tokens.
-    """
-    trimmed = []
-    # Identify ToolMessages that are long and might be from get_dom_tree
-    # We keep the most recent ones but can truncate older long ones
-    for i, msg in enumerate(messages):
-      if isinstance(msg, ToolMessage) and len(str(msg.content)) > 2000:
-        # Check if it's the last tool message of this type, if so keep it, else truncate
-        is_last_of_type = True
-        for next_msg in messages[i+1:]:
-           if isinstance(next_msg, ToolMessage) and next_msg.name == msg.name:
-              is_last_of_type = False
-              break
-        
-        if not is_last_of_type:
-           # Truncate older results
-           trimmed.append(ToolMessage(
-              content=str(msg.content)[:500] + "... [TRUNCATED TO SAVE TOKENS]",
-              tool_call_id=msg.tool_call_id,
-              name=msg.name
-           ))
-           continue
-      
-      trimmed.append(msg)
-    return trimmed
-
+  @node(Nodes.SCRIPT_EXECUTOR)
   def _make_script_executor_node(self, tools: List[BaseTool] = []) -> Command:
     async def executor_node(state: State) -> Command:
-      self.logger.debug(f"{Nodes.SCRIPT_EXECUTOR.upper()} 🤖")
       prompt = self.__get_prompt_template(Nodes.SCRIPT_EXECUTOR)
       model = self.llm.bind_tools(tools)
       
       script_executed = state.get("script_executed", False)
       last_message = state["messages"][-1]
-      if isinstance(last_message, ToolMessage) and last_message.name == Tools.EXECUTE_SCRAP_SCRIPT:
-        script_executed = False if "Error" in last_message.content else True
-        self.logger.debug(f"Script executed with success: {script_executed}")
-
-      # Trim history before calling LLM
+      
+      if isinstance(last_message, ToolMessage) and last_message.name == Tools.EXECUTE_SCRAP_SCRIPT:        
+        script_executed = self._validate_script_execution(last_message.content)
+      
       trimmed_state = state.copy()
       trimmed_state["messages"] = self._trim_history(state["messages"])
+      
+      s_script = state.get("scrap_script", "None")
+      trimmed_state["scrap_script"] = json.dumps(s_script, indent=2) if isinstance(s_script, dict) else str(s_script)
+      trimmed_state["query"] = state["query"]
 
       response = await (prompt | model).ainvoke(trimmed_state)
-      token_updates = self._save_tokens(state, response)
       
       if response.tool_calls:
-        self.logger.debug("Executing script")
-        return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
+        return Command(update={"messages": [response]}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
       
-      self.logger.debug(f"Script executed: {script_executed}")
-      target = Nodes.RESPONSE if script_executed else Nodes.SCRAPPER
-      self.logger.debug(f"Moving to: {target}")
-      return Command(update={"messages": [response], "script_executed": script_executed, **token_updates}, goto=target)
+      if not script_executed or state["scrap_script"] == "None":
+        retry_count = state.get("retry_count", 0)
+        if retry_count < self.max_retries:
+          if state["scrap_script"] == "None":
+            self.logger.info("No script found. Moving to SCRAPPER.")
+            msg = HumanMessage(content="SYSTEM ALERT: No script found for this domain. Please explore the page and find the elements.")
+          else:
+            self.logger.info(f"Script execution failed. Retrying ({retry_count + 1}/{self.max_retries})...")
+            msg = HumanMessage(content="SYSTEM ALERT: Execution failed. Please analyze the 'extract' steps and fix the selectors.")
+          
+          return Command(
+            update={"messages": [response, msg], "retry_count": retry_count + 1, "script_executed": False},
+            goto=Nodes.SCRAPPER
+          )
+        else:
+          self.logger.info("Max retries reached. Moving to RESPONSE.")
+      
+      return Command(update={"messages": [response], "script_executed": script_executed}, goto=Nodes.RESPONSE)
     return executor_node
   
-
+  @node(Nodes.SCRAPPER)
   def _make_scrapper_node(self, tools: List[BaseTool] = []) -> Command:
     async def scrapper_node(state: State) -> Command:
       prompt = self.__get_prompt_template(Nodes.SCRAPPER)
       model = self.llm.bind_tools(tools)
       
-      last_message = state["messages"][-1]
-      if isinstance(last_message, ToolMessage):
-        self.logger.debug(f"Tool message: {last_message}")
-      
-      # Trim history before calling LLM
       trimmed_state = state.copy()
       trimmed_state["messages"] = self._trim_history(state["messages"])
+      
+      trimmed_state["query"] = state["query"]
+      trimmed_state["all_results"] = str(state["all_results"])
+      trimmed_state["retry_mode"] = "True" if state.get("retry_count", 0) > 0 else "False"
 
       response = await (prompt | model).ainvoke(trimmed_state)
-      token_updates = self._save_tokens(state, response)
-
-      self.logger.debug(f"{Nodes.SCRAPPER.upper()} 🤖")
-      self.logger.debug(f"message: {response.content}")
-      self.logger.debug(f"tokens: {response.usage_metadata}")
 
       if response.tool_calls:  
         tool_calls = self._get_formatted_tool_calls(response)
-        self.logger.debug(f"tool_calls: {tool_calls}")
         return Command(
-          update={"messages": [response], "actions_history": state["actions_history"] + tool_calls, **token_updates}, 
+          update={"messages": [response], "actions_history": state["actions_history"] + tool_calls}, 
           goto=Nodes.SCRAPPER_TOOLS
         )
       
-      return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_WRITTER)
+      return Command(update={"messages": [response]}, goto=Nodes.SCRIPT_WRITTER)
     return scrapper_node
-  
-  def _get_formatted_tool_calls(self, msg: BaseMessage):
-    return [
-      f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
-      for tc in msg.tool_calls
-    ]
 
+  @node(Nodes.SCRIPT_WRITTER)
   def _make_script_writter_node(self, tools: List[BaseTool] = []) -> Command:
     async def script_writter_node(state: State) -> Command:
-      self.logger.debug(f"{Nodes.SCRIPT_WRITTER.upper()} 🤖")
       prompt = self.__get_prompt_template(Nodes.SCRIPT_WRITTER)
       model = self.llm.bind_tools(tools)
       
-      # Trim history before calling LLM
       trimmed_state = state.copy()
       trimmed_state["messages"] = self._trim_history(state["messages"])
+      
+      history = state.get("actions_history", [])
+      trimmed_state["actions_history"] = "\n".join(history) if isinstance(history, list) else str(history)
+      trimmed_state["query"] = state["query"]
 
       response = await (prompt | model).ainvoke(trimmed_state)
-      token_updates = self._save_tokens(state, response)
 
       if response.tool_calls:
         self.logger.debug("Saving scrap script")
-        return Command(update={"messages": [response], **token_updates}, goto=Nodes.SCRIPT_WRITTER_TOOLS)
+        scrap_script = response.tool_calls[0]["args"].get("scrap_script")
+        return Command(update={"messages": [response], "scrap_script": scrap_script}, goto=Nodes.SCRIPT_WRITTER_TOOLS)
       
-      self.logger.debug("Moving to: RESPONSE")
-      return Command(update={"messages": [response], **token_updates}, goto=Nodes.RESPONSE)
+      self.logger.debug("Moving to: SCRIPT_EXECUTOR")
+      return Command(update={"messages": [response]}, goto=Nodes.SCRIPT_EXECUTOR)
     return script_writter_node
 
-  async def _response_node(self, state: State):
-    self.logger.debug(f"{Nodes.RESPONSE.upper()} 🤖")
-    prompt = self.__get_prompt_template(Nodes.RESPONSE)
-    response = await (prompt | self.llm).ainvoke(state)
-    token_updates = self._save_tokens(state, response)
-    return {"messages": [response], **token_updates }
+  @node(Nodes.RESPONSE)
+  def _make_response_node(self):
+    async def response_node(state: State) -> Command:
+      prompt = self.__get_prompt_template(Nodes.RESPONSE)
+      response = await (prompt | self.llm).ainvoke(state)
+      return Command(update={"messages": [response]})
+    return response_node
 
   def __get_prompt_template(self, role) -> ChatPromptTemplate:
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", f"{role}.md")
@@ -313,4 +273,71 @@ class ScrappingAgent:
       ("system", get_prompt(prompt_path)),
       MessagesPlaceholder("messages")
     ])
+
+  def _validate_script_execution(self, execution_result: str):
+    if "Error" in execution_result:
+      return False
+    
+    try:
+      data = json.loads(execution_result)
+      def count_nones(obj):
+        total = 0
+        nones = 0
+        if isinstance(obj, dict):
+          for v in obj.values():
+            t, n = count_nones(v)
+            total += t
+            nones += n
+        elif isinstance(obj, list):
+          for v in obj:
+            t, n = count_nones(v)
+            total += t
+            nones += n
+        elif isinstance(obj, str):
+          total = 1
+          if obj == "None": nones = 1
+        return total, nones
+
+      total, nones = count_nones(data)
+        
+      if isinstance(data, list) and len(data) == 0:
+        return False 
+      elif total > 0 and (nones / total) > 0.25:
+        self.logger.info(f"Execution flagged as failure due to high None rate: {nones}/{total} (>{25}%)")
+        return False 
+      else:
+        self.logger.debug(f"Script executed with success")
+        return True
+    except Exception as e:
+      self.logger.debug(f"JSON parse error or validation error: {e}")
+      return True
+  
+  def _get_formatted_tool_calls(self, msg: BaseMessage):
+    return [
+      f"{tc['name']}(" + ", ".join(f"{k}={v!r}" for k, v in tc['args'].items()) + ")"
+      for tc in msg.tool_calls
+    ]
+
+  def _trim_history(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+    """
+    Trims tool responses that are too large or from old get_dom_tree calls to save tokens.
+    """
+    trimmed = []
+    for i, msg in enumerate(messages):
+      if isinstance(msg, ToolMessage):
+        is_recent = i >= len(messages) - 3
+        
+        if len(str(msg.content)) > 2000:
+          if is_recent:
+             trimmed.append(msg)
+          else:
+            trimmed.append(ToolMessage(
+              content=str(msg.content)[:300] + "... [TRUNCATED TO SAVE TOKENS]",
+              tool_call_id=msg.tool_call_id,
+              name=msg.name
+            ))
+          continue
+      
+      trimmed.append(msg)
+    return trimmed
 
