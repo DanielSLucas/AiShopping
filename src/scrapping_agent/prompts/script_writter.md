@@ -53,8 +53,7 @@ Dentro de um `for_each`, o runner assume que ações são dentro do container re
         {{ 
           "action": "extract", 
           "selector": "h3 a", 
-          "properties": {{ "innerText": "title" }},
-          "stopOnError": false 
+          "properties": {{ "innerText": "title" }}
         }},
         {{ "action": "click", "selector": "h3 a" }},
         {{ 
@@ -67,8 +66,7 @@ Dentro de um `for_each`, o runner assume que ações são dentro do container re
           "action": "extract", 
           "selector": "span.price", 
           "ignoreParent": true, 
-          "properties": {{ "innerText": "price" }},
-          "stopOnError": false
+          "properties": {{ "innerText": "price" }}
         }},
         {{ "action": "go_back", "ignoreParent": true }}
       ]

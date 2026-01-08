@@ -75,81 +75,134 @@ class Scrapper:
   async def extract_elements(self, el_selector: str, trunc: bool = True, limit: int = 50, compact: bool = False):
     """
       Extracts elements from the page based on the provided selector.
+      Returns a JSON list with detailed DOM trees including attributes.
       Args:
         el_selector (str): The selector to find elements.
-        trunc (bool): Whether to truncate the text content. Default is True.
+        trunc (bool): Whether to truncate text content (max 100 chars). Default is True.
         limit (int): The maximum number of elements to extract. Default is 50.
-        compact (bool): Whether to compact identical elements with a count. Default is False.
+        compact (bool): If true, groups identical elements and adds a count.
       Returns:
-        str: A formatted string with the extracted elements.
+        str: A JSON string with an array of detailed DOM trees.
     """
     try:
-      elements = await self.__get_page().query_selector_all(el_selector)
-      formatted_elements = []
-      last_element = {'el': None, 'count': 0}
-      
-      for el in elements:
-        element = await self.__serialize_element(el, trunc)
+      js_script = """
+      (args) => {
+        const [selector, truncate, maxElements, compactMode] = args;
+        const elements = document.querySelectorAll(selector);
+        if (elements.length === 0) return JSON.stringify([]);
+
+        function getAttributes(node) {
+          const attrs = {};
+          const tagName = node.tagName.toLowerCase();
+          
+          // innerText (direct text, not children's text)
+          let directText = '';
+          for (let child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              directText += child.textContent;
+            }
+          }
+          directText = directText.replace(/[\\s\\t\\n]+/g, ' ').trim();
+          if (directText) {
+            attrs.innerText = truncate && directText.length > 100 
+              ? directText.substring(0, 100) + '...' 
+              : directText;
+          }
+          
+          // Common important attributes
+          const ariaLabel = node.getAttribute('aria-label');
+          if (ariaLabel) attrs.ariaLabel = ariaLabel;
+          
+          const title = node.getAttribute('title');
+          if (title) attrs.title = title;
+          
+          const role = node.getAttribute('role');
+          if (role) attrs.role = role;
+          
+          const dataTestId = node.getAttribute('data-testid') || node.getAttribute('data-test-id');
+          if (dataTestId) attrs.dataTestId = dataTestId;
+          
+          // Tag-specific attributes
+          if (tagName === 'a') {
+            attrs.href = node.getAttribute('href') || '';
+          }
+          if (tagName === 'img') {
+            attrs.src = node.getAttribute('src') || '';
+            attrs.alt = node.getAttribute('alt') || '';
+          }
+          if (tagName === 'input' || tagName === 'textarea') {
+            attrs.name = node.getAttribute('name') || '';
+            attrs.placeholder = node.getAttribute('placeholder') || '';
+            attrs.type = node.getAttribute('type') || '';
+            attrs.value = node.value || '';
+          }
+          if (tagName === 'button' || tagName === 'input') {
+            attrs.disabled = node.disabled || false;
+          }
+          
+          return attrs;
+        }
+
+        function traverse(node, depth) {
+          if (depth > 10) return { "...": {} };
+          
+          if (node.nodeType !== Node.ELEMENT_NODE) return null;
+          
+          const style = window.getComputedStyle(node);
+          if (style.display === 'none' || style.visibility === 'hidden') return null;
+
+          const tagName = node.tagName.toLowerCase();
+          const id = node.id ? '#' + node.id : '';
+          let className = node.classList.length > 0 ? '.' + [...node.classList].join('.') : '';
+          let selectorStr = tagName + id + className;
+          
+          const attrs = getAttributes(node);
+          
+          // Collect children
+          let children = [];
+          for (let child of node.childNodes) {
+            if (child.nodeType === Node.ELEMENT_NODE) {
+              const res = traverse(child, depth + 1);
+              if (res) children.push(res);
+            }
+          }
+          
+          if (children.length > 0) {
+            attrs.children = children;
+          }
+          
+          return { [selectorStr]: attrs };
+        }
+
+        const results = [];
+        const seen = new Map(); // For compact mode deduplication
         
-        if compact and self.__isDuplicated(last_element, element):
-          updated__last_element = last_element['el'].copy()
-          updated__last_element['Count'] = last_element['count']
-          formatted_elements[-1] = self.__stringfy_element(updated__last_element)
-        else:
-          formatted_elements.append(self.__stringfy_element(element))
-
-        if len(formatted_elements) >= limit:
-          break
-      
-      if len(formatted_elements) == 0:
-        formatted_elements.append("No elements found")
-
-      return "Extracted elements:\n-" + "\n- ".join(formatted_elements)
+        for (let i = 0; i < Math.min(elements.length, maxElements); i++) {
+          const tree = traverse(elements[i], 0);
+          if (!tree) continue;
+          
+          if (compactMode) {
+            const key = Object.keys(tree)[0]; // selector string
+            if (seen.has(key)) {
+              seen.get(key).count++;
+            } else {
+              tree[key].count = 1;
+              seen.set(key, tree[key]);
+              results.push(tree);
+            }
+          } else {
+            results.push(tree);
+          }
+        }
+        
+        return JSON.stringify(results);
+      }
+      """
+      return await self.__get_page().evaluate(js_script, [el_selector, trunc, limit, compact])
     except Exception as e:
       return f"Error running 'extract_elements'. Error: {str(e)}"
 
-  async def __serialize_element(self, el, trunc):
-    tag_name = (await el.evaluate('el => el.tagName')).lower()
-    
-    element = { "Element": tag_name }
-
-    class_name = (await el.evaluate('el => el.className')).strip()
-    if class_name:
-      element['Classes'] = class_name
-    
-    text = re.sub(r'[\s\t\n]+', ' ', (await el.text_content()).strip())
-    if text:
-      formatted_text = text if not trunc else text[:50] + "..." if len(text) > 50 else text
-      element['Text'] = formatted_text
-
-    if tag_name == "a":
-      element['Href'] = await el.get_attribute("href")
-
-    if tag_name == "input":
-      element['Placeholder'] = await el.get_attribute("placeholder") or "no placeholder"
-      element['Name'] = await el.get_attribute("name") or "no name"
-    
-    return element
-  
-  def __stringfy_element(self, el):
-    if isinstance(el, dict):
-      return " ".join([f"{key}: {value}" for key, value in el.items()])
-    return str(el)
-  
-  def __isDuplicated(self, last_element, element):
-    if last_element['el'] is None:
-      last_element['el'] = element
-      last_element['count'] = 1
-      return False
-
-    if last_element['el']['Element'] == element['Element'] \
-      and last_element['el'].get('Classes') == element.get('Classes'):
-      last_element['count'] += 1
-      return True
-        
-    last_element['el'] = element
-    last_element['count'] = 1
-    return False
+  # Removed __serialize_element, __stringfy_element, __isDuplicated (extract_elements now uses JS)
 
   async def interact_with_element(self, el_selector: str, interaction: str, text: str, is_download: bool = False):
     """
@@ -201,59 +254,39 @@ class Scrapper:
     except Exception as e:
       return f"Error running 'print_page'. Error: {str(e)}"
   
-  async def page_summary(self):
-    """
-      Summarizes the current page by extracting the URL, title, description, text elements
-      and interaction elements.
-      Returns:
-        str: A formatted string with the page summary.
-    """
-    try:
-      url = self.__get_page().url
-      title = await self.__get_page().title()
-      description = await self.__get_page().evaluate("() => document.querySelector('meta[name=\"description\"]')?.getAttribute('content') || 'No description available'")
-      
-      text_elements_tags = "h1, h2, h3, h4, p, li, td, th, label"
-      interaction_elements_tags = "a, button, input"
-
-      text_elements = await self.extract_elements(text_elements_tags, True, 1000, True)
-      interaction_elements = await self.extract_elements(interaction_elements_tags, True, 1000, True)
-
-      return f"URL: {url}\n" \
-        + f"Title: {title}\n" \
-        + f"Description: {description}\n" \
-        + f"Text elements: \n{text_elements}\n" \
-        + f"Interaction elements: \n{interaction_elements}"
-    except Exception as e:
-      return f"Error running 'page_summary'. Error: {str(e)}"
+  # page_summary method removed in favor of get_dom_tree
     
   async def get_dom_tree(self, selector: str = "body", limit: int = 50):
     """
-      Returns a simplified DOM tree of the page, focusing on structural and interactive elements.
+      Returns a simplified DOM tree of the page, including title and description.
       Args:
         selector (str): The selector to start the tree from.
-        limit (int): The maximum number of items to capture to avoid huge outputs.
+        limit (int): The maximum number of nodes to capture.
       Returns:
-        str: A JSON-like string representation of the DOM tree.
+        str: A JSON string with 'title', 'description', and 'tree'.
     """
     try:
       js_script = """
       (args) => {
         const [rootSelector, limit] = args;
         const root = document.querySelector(rootSelector);
-        if (!root) return "Element not found";
+        if (!root) return JSON.stringify({ error: "Element not found" });
 
-        const importantTags = new Set(['H1','H2','H3','H4','H5','H6','P','A','BUTTON','INPUT','UL','OL','LI','TABLE','THEAD','TBODY','TR','TH','TD','FORM', 'IMG', 'DIV', 'SPAN']);
+        const title = document.title || '';
+        const descMeta = document.querySelector('meta[name="description"]');
+        const description = descMeta ? descMeta.getAttribute('content') : '';
+
+        const importantTags = new Set(['H1','H2','H3','H4','H5','H6','P','A','BUTTON','INPUT','UL','OL','LI','TABLE','THEAD','TBODY','TR','TH','TD','FORM','IMG','DIV','SPAN']);
         
         let counter = 0;
         
         function traverse(node, depth) {
           if (counter >= limit) return null;
-          if (depth > 20) return "..."; 
+          if (depth > 20) return "...";
           
           if (node.nodeType === Node.TEXT_NODE) {
             const text = node.textContent.replace(/[\\s\\t\\n]+/g, ' ').trim();
-            if (text.length > 0) return text;
+            if (text.length > 0) return text.length > 80 ? text.substring(0, 80) + '...' : text;
             return null;
           }
           
@@ -264,10 +297,7 @@ class Scrapper:
 
           const tagName = node.tagName;
           const id = node.id ? '#' + node.id : '';
-          let className = "";
-          if (node.classList && node.classList.length > 0) {
-             className = '.' + [...node.classList].join('.');
-          }
+          let className = (node.classList && node.classList.length > 0) ? '.' + [...node.classList].join('.') : '';
           const fullSelector = (tagName + id + className).toLowerCase();
           
           let children = [];
@@ -276,19 +306,16 @@ class Scrapper:
              if (childResult) children.push(childResult);
           }
           
-          // Filter 'unimportant' containers that just wrap a single child or no meaningful attributes
           if (!importantTags.has(tagName) && id === '' && className === '' && children.length <= 1) {
              return children.length === 1 ? children[0] : null;
           }
 
           if (children.length === 0 && !importantTags.has(tagName)) return null;
           
-          // Collapse if children are just text
           if (children.length > 0 && children.every(c => typeof c === 'string')) {
              const joined = children.join(' ').trim();
              if (joined.length === 0) return null;
              if (!importantTags.has(tagName) && id === '' && className === '') return joined;
-             // Keep the tag if it has attributes
           }
 
           counter++;
@@ -305,7 +332,8 @@ class Scrapper:
           }
         }
 
-        return JSON.stringify(traverse(root, 0));
+        const tree = traverse(root, 0);
+        return JSON.stringify({ title, description, tree });
       }
       """
       return await self.__get_page().evaluate(js_script, [selector, limit])

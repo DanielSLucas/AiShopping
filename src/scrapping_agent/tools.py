@@ -12,7 +12,6 @@ from utils.logger import Logger
 class Tools(StrEnum):
   EXTRACT_ELEMENTS = "extract_elements"
   INTERACT_WITH_ELEMENT = "interact_with_element"
-  PAGE_SUMMARY = "page_summary"
   GET_DOM_TREE = "get_dom_tree"
   GET_URL = "get_url"
   GO_BACK = "go_back"
@@ -35,14 +34,14 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
   @tool
   async def extract_elements(el_selector: str, trunc: bool = True, limit: int = 50, compact: bool = False) -> str:
     """
-    Extracts elements from the page based on the provided selector.
+    Extracts elements matching a selector with detailed attributes.
     Args:
-        el_selector: The selector to find elements.
-        trunc: Whether to truncate the text content.
-        limit: The maximum number of elements to extract.
-        compact: Whether to compact identical elements with a count.
+        el_selector: The CSS selector to find elements.
+        trunc: Whether to truncate text content (max 100 chars).
+        limit: Maximum number of elements to return.
+        compact: If true, groups identical selectors and adds a count.
     Returns:
-        A formatted string with the extracted elements.
+        A JSON array with detailed DOM trees including innerText, ariaLabel, href, src, children, etc.
     """
     return await scrapper.extract_elements(el_selector, trunc, limit, compact)
 
@@ -76,15 +75,7 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     
     return page_description
 
-  @tool
-  async def page_summary() -> str:
-    """
-    Summarizes the current page by extracting the URL, title, description, text elements
-    and interaction elements.
-    Returns:
-        A formatted string with the page summary.
-    """
-    return await scrapper.page_summary()
+
   
   @tool
   async def go_back() -> str:
@@ -184,19 +175,18 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
   @tool
   async def get_dom_tree(selector: str = "body", limit: int = 50) -> str:
     """
-    Returns a simplified DOM tree of the page, focusing on structural and interactive elements.
+    Returns a simplified DOM tree including page title and description.
     Args:
-        selector: The selector to start the tree from.
-        limit: The maximum number of items to capture to avoid huge outputs.
+        selector: The CSS selector to start the tree from (default "body").
+        limit: Maximum number of nodes to capture.
     Returns:
-        A JSON-like string representation of the DOM tree.
+        A JSON string with 'title', 'description', and 'tree' keys.
     """
     return await scrapper.get_dom_tree(selector, limit)
 
   return {
     Tools.EXTRACT_ELEMENTS: extract_elements, 
     Tools.INTERACT_WITH_ELEMENT: interact_with_element,
-    Tools.PAGE_SUMMARY: page_summary,
     Tools.GET_DOM_TREE: get_dom_tree, 
     Tools.NAVIGATE: navigate,
     Tools.GET_URL: get_url,
