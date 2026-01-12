@@ -6,7 +6,8 @@ from uuid import uuid4
 from typing import Annotated, Literal, TypedDict, List
 from enum import StrEnum
 
-from scrapping_agent.scrap import ScrapScriptsManager
+from scrapping_agent.repository import ScrapScriptsRepository
+from scrapping_agent.disk_repository import DiskScrapScriptsRepository
 from scrapping_agent.scrapper import Scrapper
 from scrapping_agent.tools import make_scrapper_tools, Tools
 from utils.logger import Logger
@@ -25,13 +26,15 @@ from langchain_core.tools import BaseTool
 
 class State(TypedDict):
   query: str
+  domain: str
   all_results: bool
   messages: Annotated[List[BaseMessage], add_messages]
   actions_history: List[str]
   tokens: int
   input_tokens: int
   output_tokens: int
-  scrap_script: dict
+  available_scripts: str  # JSON string of script summaries
+  selected_script_id: str
   script_executed: bool
   retry_count: int
 
@@ -104,22 +107,26 @@ class ScrappingAgent:
     if not self.graph:
       self.graph = self._build_graph()
 
-    ssm = ScrapScriptsManager()
-
-    scrap_script_exists = ssm.exists(extract_domain(self.url))
-    scrap_script = ssm.get(extract_domain(self.url)) if scrap_script_exists else "None"
+    repo: ScrapScriptsRepository = DiskScrapScriptsRepository()
+    domain = extract_domain(self.url)
+    
+    # Get available scripts for this domain
+    scripts = repo.list_by_domain(domain)
+    available_scripts = json.dumps([s.to_summary() for s in scripts], indent=2, ensure_ascii=False) if scripts else "[]"
 
     initial_message = f"Busque: {query}\nNo Site: {self.url}"
       
     initial_state = State(
       query=query,
+      domain=domain,
       all_results=all_results,
       messages=[HumanMessage(initial_message)],
       actions_history=[],
       tokens=0,
       input_tokens=0,
       output_tokens=0,
-      scrap_script=scrap_script,
+      available_scripts=available_scripts,
+      selected_script_id="",
       script_executed=False,
       retry_count=0
     )
@@ -146,7 +153,7 @@ class ScrappingAgent:
   def _build_graph(self) -> StateGraph:
     graph_builder = StateGraph(State)
 
-    executor_tools = [t for t in self.scrapping_tools.values() if t.get_name() in [Tools.EXECUTE_SCRAP_SCRIPT, Tools.GET_SCRAP_SCRIPT]]
+    executor_tools = [t for t in self.scrapping_tools.values() if t.get_name() in [Tools.EXECUTE_SCRAP_SCRIPT, Tools.GET_SCRAP_SCRIPT, Tools.LIST_DOMAIN_SCRIPTS]]
     writter_tools = [self.scrapping_tools[Tools.SAVE_SCRAP_SCRIPT]]
     scrapper_tools = [t for t in self.scrapping_tools.values() if t not in executor_tools + writter_tools]
 
@@ -181,21 +188,31 @@ class ScrappingAgent:
       trimmed_state = state.copy()
       trimmed_state["messages"] = self._trim_history(state["messages"])
       
-      s_script = state.get("scrap_script", "None")
-      trimmed_state["scrap_script"] = json.dumps(s_script, indent=2) if isinstance(s_script, dict) else str(s_script)
+      # Pass available scripts for this domain
+      trimmed_state["available_scripts"] = state.get("available_scripts", "[]")
+      trimmed_state["domain"] = state.get("domain", "")
       trimmed_state["query"] = state["query"]
 
       response = await (prompt | model).ainvoke(trimmed_state)
       
       if response.tool_calls:
-        return Command(update={"messages": [response]}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
+        # Track selected script ID if executing
+        selected_id = ""
+        for tc in response.tool_calls:
+          if tc["name"] == Tools.EXECUTE_SCRAP_SCRIPT:
+            selected_id = tc["args"].get("script_id", "")
+            break
+        return Command(update={"messages": [response], "selected_script_id": selected_id}, goto=Nodes.SCRIPT_EXECUTOR_TOOLS)
       
-      if not script_executed or state["scrap_script"] == "None":
+      available = state.get("available_scripts", "[]")
+      has_scripts = available != "[]" and available != "" and json.loads(available)
+      
+      if not script_executed or not has_scripts:
         retry_count = state.get("retry_count", 0)
         if retry_count < self.max_retries:
-          if state["scrap_script"] == "None":
-            self.logger.info("No script found. Moving to SCRAPPER.")
-            msg = HumanMessage(content="SYSTEM ALERT: No script found for this domain. Please explore the page and find the elements.")
+          if not has_scripts:
+            self.logger.info("No scripts available. Moving to SCRAPPER.")
+            msg = HumanMessage(content="SYSTEM ALERT: No scripts available for this domain. Please explore the page and find the elements.")
           else:
             self.logger.info(f"Script execution failed. Retrying ({retry_count + 1}/{self.max_retries})...")
             msg = HumanMessage(content="SYSTEM ALERT: Execution failed. Please analyze the 'extract' steps and fix the selectors.")
@@ -247,6 +264,7 @@ class ScrappingAgent:
       history = state.get("actions_history", [])
       trimmed_state["actions_history"] = "\n".join(history) if isinstance(history, list) else str(history)
       trimmed_state["query"] = state["query"]
+      trimmed_state["selected_script_id"] = state.get("selected_script_id", "None")
 
       response = await (prompt | model).ainvoke(trimmed_state)
 

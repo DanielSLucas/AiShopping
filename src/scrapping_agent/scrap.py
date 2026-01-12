@@ -1,36 +1,20 @@
 import os
 import json
 from asyncio import sleep
-
 from typing import Dict, List, Any, Callable
 
 from utils.logger import Logger
 from utils.utils import extract_domain
-
 from scrapping_agent.playwright_scrapper import PlaywrightScrapper
+from scrapping_agent.repository import ScrapScript
 
-class ScrapScriptsManager:
-  SCRAP_SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "scrap_scripts")
-
-  def list_all(self):
-    return [f.replace(".json", "") for f in os.listdir(self.SCRAP_SCRIPTS_DIR)]
-
-  def exists(self, script_name: str) -> bool:
-    return os.path.exists(os.path.join(self.SCRAP_SCRIPTS_DIR, f"{script_name}.json"))
-
-  def get(self, script_name: str) -> dict:
-    return json.load(open(os.path.join(self.SCRAP_SCRIPTS_DIR, f"{script_name}.json")))
-  
-  def save(self, script_name: str, script: dict) -> None:
-    with open(os.path.join(self.SCRAP_SCRIPTS_DIR, f"{script_name}.json"), "w") as f:
-      json.dump(script, f, indent=2, ensure_ascii=False) 
 
 class ScrapScriptRunner:
-  def __init__(self, scrap_script: Dict[str, Any], input_values: Dict[str, str | int], debug: bool = False, logger: Logger = None):
+  def __init__(self, script: ScrapScript, input_values: Dict[str, str | int], debug: bool = False, logger: Logger = None):
     self.input_values = input_values
-    self.scrap_script: Dict[str, Any] = scrap_script
+    self.script = script
     
-    log_name = extract_domain(scrap_script["site"])
+    log_name = extract_domain(script.site)
     self.logger = Logger(file_name=f"scrap_{log_name}", show_debug_logs=debug) if not logger else logger
     self.debug = debug
 
@@ -39,15 +23,20 @@ class ScrapScriptRunner:
 
   async def run(self) -> str:
     self.validate_inputs()
-    self.scrap_script = self.replace_placeholders(self.scrap_script)
+    
+    # Placeholder replacement on a dict representation to avoid mutating the model
+    # but still allow the runner logic to work as expected.
+    # We use model_dump(by_alias=True) to get keys like 'ignoreParent' as in JSON.
+    script_data = self.script.model_dump(by_alias=True)
+    running_script = self.replace_placeholders(script_data)
 
     scrapper = PlaywrightScrapper()
     extracted_data: List[str] = []
 
-    self.logger.debug(f"Accessing '{self.scrap_script['site']}'")
-    await scrapper.initialize(self.scrap_script["site"], self.debug)
+    self.logger.debug(f"Accessing '{running_script['site']}'")
+    await scrapper.initialize(running_script["site"], self.debug)
 
-    for step in self.scrap_script['steps']:
+    for step in running_script['steps']:
       result = await self.execute_step(scrapper, step)
       if result is False:
         break
@@ -64,14 +53,14 @@ class ScrapScriptRunner:
 
 
   def validate_inputs(self) -> None:
-    if "input" in self.scrap_script:
+    if self.script.input_schema:
       missing_inputs = []
-      for input_name in self.scrap_script["input"]:
+      for input_name in self.script.input_schema:
         if input_name not in self.input_values:
           missing_inputs.append(input_name)
 
       if missing_inputs:
-        required_inputs = '\n- '.join([f"{k}: {v}" for k, v in self.scrap_script['input'].items()])
+        required_inputs = '\n- '.join([f"{k}: {v}" for k, v in self.script.input_schema.items()])
         self.logger.info(f"Error: Missing required input variables: {', '.join(missing_inputs)}")
         self.logger.info(f"Required inputs: \n- {required_inputs}")
         raise ValueError(f"Missing required input variables: {', '.join(missing_inputs)}")
@@ -118,7 +107,7 @@ class ScrapScriptRunner:
   
 
 class ScrapScriptsStepActions:
-  def __init__(self, execute_step_cb: Callable[[PlaywrightScrapper,dict], bool | dict]):
+  def __init__(self, execute_step_cb: Callable[[PlaywrightScrapper, Dict[str, Any]], bool | dict]):
     self.execute_step = execute_step_cb
     self.__actions = {
       "navigate": self.navigate,

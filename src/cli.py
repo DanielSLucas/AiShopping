@@ -13,7 +13,8 @@ from scrapping_agent.agent import ScrappingAgent
 from shopping_agent.agent import ShoppingAgent
 from utils.logger import Logger
 
-from scrapping_agent.scrap import ScrapScriptsManager, ScrapScriptRunner
+from scrapping_agent.scrap import ScrapScriptRunner
+from scrapping_agent.disk_repository import DiskScrapScriptsRepository
 
 def log_listener(msg: str):
   try:
@@ -69,16 +70,17 @@ async def run_scrapping_agent():
   result = await agent.run("Livros de ficção científica", all_results=False)
 
   await agent.close()
-  print(result)
+  save_results(json.dumps(result["content"], indent=2, ensure_ascii=False), "scrap_result.json")
 
 async def run_scrap_script():
-  json_file, input_values = parse_args()
-  ssm = ScrapScriptsManager()
-  scrap_script = ssm.get(json_file.replace('.json', ""))
+  script_id, input_values = parse_args()
+  repo = DiskScrapScriptsRepository()
+  scrap_script = repo.get_by_id(script_id)
+  print(json.dumps(scrap_script.to_summary(), indent=2))
   scraper = ScrapScriptRunner(scrap_script, input_values, debug=True)
   scraper.logger.LOGS_QUEUE.put = log_listener
   extracted_data = await scraper.run()
-  save_results(extracted_data, "extracted_data.txt")
+  save_results(extracted_data, "extracted_data.json")
 
 def save_results(extracted_data: str, output_file: str = 'extracted_data.txt') -> None:
   with open(output_file, 'w') as file:

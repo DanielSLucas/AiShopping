@@ -1,8 +1,10 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 from enum import StrEnum
 
-from scrapping_agent.scrap import ScrapScriptsManager, ScrapScriptRunner
+from scrapping_agent.scrap import ScrapScriptRunner
+from scrapping_agent.repository import ScrapScript, ScrapScriptsRepository
+from scrapping_agent.disk_repository import DiskScrapScriptsRepository
 from scrapping_agent.scrapper import Scrapper
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import tool, BaseTool
@@ -20,6 +22,7 @@ class Tools(StrEnum):
   EXECUTE_SCRAP_SCRIPT = "execute_scrap_script"
   GET_SCRAP_SCRIPT = "get_scrap_script"
   SAVE_SCRAP_SCRIPT = "save_scrap_script"
+  LIST_DOMAIN_SCRIPTS = "list_domain_scripts"
 
 def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, headless: bool = True, logger: Logger = None) -> dict[Tools, BaseTool]:
   """
@@ -109,66 +112,108 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
 
     return await scrapper.navigate(url)
 
+  # Repository instance (using disk storage)
+  repo: ScrapScriptsRepository = DiskScrapScriptsRepository()
+
   @tool
-  async def execute_scrap_script(scrap_script_url: str, input_values: dict = {}) -> str:
+  async def execute_scrap_script(script_id: str, input_values: dict = {}) -> str:
     """
-      Executes a scrap script with the provided input values.
+      Executes a scrap script by its ID with the provided input values.
       Args:
-        scrap_script_url: The URL to be scrapped.
+        script_id: The unique ID of the script to execute.
         input_values: The input values for the scrap script.
       Returns:
         The extracted data from the scrap script.
     """
     try:
-      ssm = ScrapScriptsManager()
-      scrap_script_name = extract_domain(scrap_script_url)
+      script = repo.get_by_id(script_id)
       
-      if not ssm.exists(scrap_script_name):
-        return f"There is no script for this url '{scrap_script_url}'"
+      if script is None:
+        return f"There is no script with ID '{script_id}'"
       
-      scrap_script = ssm.get(scrap_script_name)
-      scraper = ScrapScriptRunner(scrap_script, input_values, debug=not headless, logger=logger)
+      runner = ScrapScriptRunner(script, input_values, debug=not headless, logger=logger)
 
-      return await scraper.run()
+      return await runner.run()
     except Exception as e:
       return f"Error running 'execute_scrap_script'. Error: {str(e)}"
 
   @tool
-  async def get_scrap_script(scrap_script_url: str) -> dict:
+  async def get_scrap_script(script_id: str) -> dict:
     """
-      Gets a scrap script for the given URL.
+      Gets a scrap script by its ID.
       Args:
-        scrap_script_url: The URL of the scrap script to retrieve.
+        script_id: The unique ID of the script to retrieve.
       Returns:
         The scrap script if it exists, or an error message.
     """
     try:
-      ssm = ScrapScriptsManager()
-      scrap_script_name = extract_domain(scrap_script_url)
+      script = repo.get_by_id(script_id)
       
-      if not ssm.exists(scrap_script_name):
-        return f"There is no script for this url '{scrap_script_url}'"
+      if script is None:
+        return f"There is no script with ID '{script_id}'"
       
-      scrap_script = ssm.get(scrap_script_name)
-
-      return scrap_script
+      return script.to_execution_dict()
     except Exception as e:
-      return f"Error running 'execute_scrap_script'. Error: {str(e)}"
-    
+      return f"Error running 'get_scrap_script'. Error: {str(e)}"
+
   @tool
-  async def save_scrap_script(scrap_script: Dict[str, Any]) -> str:
+  async def list_domain_scripts(domain: str) -> List[Dict[str, Any]]:
     """
-      Saves a scrap script.
+      Lists all available scripts for a domain with their summaries.
       Args:
-        scrap_script: The scrap script to save.
+        domain: The domain to list scripts for (e.g., "amazon.com.br").
       Returns:
-        A message indicating the result of the save operation.
+        A list of script summaries with id, name, description, and inputs.
     """
     try:
-      ssm = ScrapScriptsManager()
-      script_name = extract_domain(scrap_script["site"])
-      ssm.save(script_name, scrap_script)
-      return f"Scrap script '{script_name}' saved."
+      summaries = repo.get_domain_summaries(domain)
+      if not summaries:
+        return f"No scripts found for domain '{domain}'"
+      return summaries
+    except Exception as e:
+      return f"Error running 'list_domain_scripts'. Error: {str(e)}"
+    
+  @tool
+  async def save_scrap_script(scrap_script: Dict[str, Any], script_id: str = None) -> str:
+    """
+      Saves a scrap script. Requires 'name' and 'description' fields.
+      If script_id is provided, the existing script will be overwritten.
+      Args:
+        scrap_script: The scrap script to save with name, description, site, input, and steps.
+        script_id: (Optional) The unique ID of the script to overwrite.
+      Returns:
+        A message indicating the result of the save operation with the script ID.
+    """
+    try:
+      domain = extract_domain(scrap_script.get("site", ""))
+      
+      if script_id:
+        existing = repo.get_by_id(script_id)
+        if existing:
+          # Update existing script fields
+          existing.name = scrap_script.get("name", existing.name)
+          existing.description = scrap_script.get("description", existing.description)
+          existing.site = scrap_script.get("site", existing.site)
+          existing.input_schema = scrap_script.get("input", existing.input_schema)
+          existing.steps = scrap_script.get("steps", existing.steps)
+          existing.updated_at = datetime.now()
+          saved = repo.save(existing)
+          return f"Scrap script '{saved.name}' updated successfully (ID: {saved.id})"
+        else:
+          return f"Error: Script with ID '{script_id}' not found. Cannot overwrite."
+
+      # Create new script
+      script = ScrapScript(
+        domain=domain,
+        name=scrap_script.get("name", "default"),
+        description=scrap_script.get("description", f"Script for {domain}"),
+        site=scrap_script.get("site", ""),
+        input_schema=scrap_script.get("input", {}),
+        steps=scrap_script.get("steps", [])
+      )
+      
+      saved = repo.save(script)
+      return f"Scrap script '{saved.name}' saved with ID: {saved.id}"
     except Exception as e:
       return f"Error running 'save_scrap_script'. Error: {str(e)}"
 
@@ -194,6 +239,7 @@ def make_scrapper_tools(scrapper: Scrapper, vision_model: BaseChatModel = None, 
     Tools.PRINT_PAGE: print_page,
     Tools.EXECUTE_SCRAP_SCRIPT: execute_scrap_script,
     Tools.GET_SCRAP_SCRIPT: get_scrap_script,
-    Tools.SAVE_SCRAP_SCRIPT: save_scrap_script
+    Tools.SAVE_SCRAP_SCRIPT: save_scrap_script,
+    Tools.LIST_DOMAIN_SCRIPTS: list_domain_scripts
   }
   
